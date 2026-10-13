@@ -19,7 +19,21 @@ reaches both apps:
 It ships as one npm package, `@towerism/selfhost-kit`, with a framework-free core and h3/Nitro adapters on
 `@towerism/selfhost-kit/nitro`.
 
-> **Status: architecture accepted (2026-10-13). No code yet.** Implementation starts with milestone K0.
+> **Status: K0 (repo foundation) delivered. No API yet.** The package, its toolchain, CI and the release
+> pipeline are in place, and the entry points are empty until milestone K1 (core) and K2 (Nitro adapters).
+
+## Install
+
+```sh
+pnpm add --save-exact @towerism/selfhost-kit
+```
+
+Requires Node 22.12 or later. The package is ESM only. `h3` (for `/nitro`) and `vitest` (for `/testing`)
+are optional peer dependencies. While the kit is in `0.x`, pin an exact version: a minor release may break.
+
+## Security
+
+To report a vulnerability, see [SECURITY.md](SECURITY.md). Don't open a public issue.
 
 ## Read first
 
@@ -27,6 +41,18 @@ It ships as one npm package, `@towerism/selfhost-kit`, with a framework-free cor
   `/data` contract, how fixes reach both apps, the migration plan, risks and milestones.
 - [Architecture Decision Records](docs/architecture/README.md#13-architecture-decision-records)
 - [Follow-up issues for the apps](docs/architecture/follow-up-issues.md) (drafts)
+- [Releasing](docs/releasing.md): how versions are published, the credentials involved (none stored),
+  rollback, and what to do when a release fails
+
+## Development
+
+```sh
+pnpm install --frozen-lockfile
+pnpm lint && pnpm typecheck && pnpm test   # test includes the coverage gate
+pnpm build && pnpm check:package && pnpm test:package
+```
+
+Commits follow [Conventional Commits](https://www.conventionalcommits.org/): they decide the next version.
 
 ## Scope
 
