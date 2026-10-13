@@ -1,6 +1,6 @@
 # ADR-0005: Semver, compatibility rules and the security-fix path
 
-- Status: Accepted (2026-10-13)
+- Status: Accepted (2026-10-13); amended 2026-10-13 (the `v0.0.0` bootstrap tag, below)
 - Date: 2026-10-13
 
 ## Context
@@ -37,7 +37,7 @@ read what the newer version wrote: vault blobs and secret files.
   - `!` or `BREAKING CHANGE:` → major;
   - `docs`, `test`, `chore`, `ci`, `refactor` and `build` release nothing.
 
-  A `v*` tag is never pushed by hand.
+  A `v*` tag is never pushed by hand (one exception, recorded in the amendment below).
 - **`0.x` until attendance's migration is complete (K4).** In 0.x a minor may break. Consumers pin an
   **exact** version, and Renovate still proposes every bump. `1.0.0` is cut once both apps run on the kit
   and the API has survived a real migration (K5).
@@ -108,3 +108,18 @@ security fixes for 90 days. `SECURITY.md` records this.
   - the `/testing` contract suites run in each app's CI;
   - an API-surface check (an `api-extractor`-style report diffed in PRs) flags export changes;
   - the review checklist asks "is this breaking?" for every PR.
+
+## Amendment (2026-10-13): the `v0.0.0` bootstrap tag
+
+Approved by the owner with the K0 spec (issue #6).
+
+- **Context.** semantic-release's first release is `1.0.0` when no earlier `v*` tag exists, but the
+  numbering above starts the kit at `0.1.0` and keeps it in `0.x` until K5. npm also needed a hand-published
+  `0.0.0` placeholder before a trusted publisher could be attached ([ADR-0003](0003-single-package-on-npm.md)).
+- **Decision.** Exactly once, during K0, a `v0.0.0` tag was pushed by hand on the last commit of `main`
+  before the K0 merge. It marks the placeholder and gives semantic-release a starting point, so the first
+  automated release is `0.1.0`. No other `v*` tag is ever pushed by hand.
+- **Also implemented in K0.** While in `0.x`, the release rules map a breaking change to a **minor**, as
+  the numbering above already says. The rule is removed when `1.0.0` is cut (K5).
+- **Consequence.** The tag history starts at `v0.0.0`, which has no automated release or provenance
+  behind it. `0.0.0` is deprecated on npm. The procedure is in [docs/releasing.md](../../releasing.md).
