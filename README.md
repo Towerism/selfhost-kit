@@ -28,7 +28,7 @@ It ships as one npm package, `@towerism/selfhost-kit`, with a framework-free cor
 pnpm add --save-exact @towerism/selfhost-kit
 ```
 
-Requires Node 22.12 or later. The package is ESM only. `h3` (for `/nitro`) and `vitest` (for `/testing`)
+Requires Node 24.11 or later. The package is ESM only. `h3` (for `/nitro`) and `vitest` (for `/testing`)
 are optional peer dependencies. While the kit is in `0.x`, pin an exact version: a minor release may break.
 
 ## Security

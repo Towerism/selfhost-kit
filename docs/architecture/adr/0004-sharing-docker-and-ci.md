@@ -1,6 +1,6 @@
 # ADR-0004: Share Docker pieces as package assets and CI as reusable workflows
 
-- Status: Accepted (2026-10-13)
+- Status: Accepted (2026-10-13); amended 2026-10-13 (Node 24, below)
 - Date: 2026-10-13
 
 ## Context
@@ -92,7 +92,8 @@ own issue spec, with the skill applied again there.
   - **Release:** runs only on `main`, only after every gate is green, with `id-token: write` for npm
     trusted publishing.
   - **Cache:** pnpm store, keyed on `pnpm-lock.yaml`.
-  - **Matrix:** none. Both consumers are on Node 22. Add Node 24 only when an app moves to it.
+  - **Matrix:** none. Both consumers are on Node 24 (they were on Node 22; see the
+    [Node 24 amendment](#amendment-2026-10-13-node-24)). Add another Node major only when an app moves to it.
   - **Secrets:** none stored (OIDC for npm, `GITHUB_TOKEN` for the GitHub Release).
   - **Environments:** the `release` job runs in a protected `npm` environment limited to `main`. There is
     **no manual approval** in the kit's own pipeline. This is a deliberate departure from a "manual gate
@@ -121,3 +122,17 @@ own issue spec, with the skill applied again there.
   caller that runs on every kit PR, building and smoke-testing the fixture image with publishing turned off.
 - (−) A change in `app-image.yml` can break both apps' publishing at once. It ships like any kit change: a
   version, a Renovate PR, and each app's CI must pass before merge.
+
+## Amendment (2026-10-13): Node 24
+
+Approved by the owner with the spec on issue #9.
+
+- **Context.** The first automated release (`0.1.0`) failed at `npm publish` with `ENEEDAUTH`. The release
+  job ran Node 22, whose bundled npm (10.9.9) can't do the trusted-publishing OIDC exchange; npm does it
+  from 11.5.1, which every Node 24 release from 24.5.0 bundles.
+- **Decision.** The kit, its CI and its release job move to **Node 24**: `.node-version` is `24` and
+  `engines` is `>=24.11`, the first Node 24 LTS. Both apps are required to upgrade to Node 24 to adopt the kit.
+- **Also implemented.** The release job checks that npm is at least 11.5.1 before semantic-release runs, so
+  an npm that can't publish stops the job before any tag is pushed ([docs/releasing.md](../../releasing.md)).
+- **Matrix.** Still none: no consumer stays on Node 22, so CI runs Node 24 only.
+- **Consequence.** An app still on Node 22 gets an `engines` warning from npm or pnpm and is unsupported.
