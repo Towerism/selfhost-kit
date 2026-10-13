@@ -1,0 +1,14 @@
+name: Tracked
+on: push
+permissions:
+  contents: read
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: shellcheck
+        env:
+          # renovate: datasource=github-release-attachments depName=koalaman/shellcheck
+          SHELLCHECK_VERSION: v0.11.0
+          SHELLCHECK_SHA256: 0000000000000000000000000000000000000000000000000000000000000001
+        run: echo "$SHELLCHECK_VERSION"
