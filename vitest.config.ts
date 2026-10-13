@@ -8,7 +8,7 @@ export default defineConfig({
     env: { TZ: 'UTC' },
     coverage: {
       provider: 'v8',
-      include: ['src/core/**', 'src/nitro/**'],
+      include: ['src/core/**', 'src/nitro/**', 'scripts/**'],
       exclude: ['src/testing/**', '**/*.test.ts'],
       thresholds: {
         ...all(90),
@@ -17,6 +17,8 @@ export default defineConfig({
         'src/core/secrets/**': all(95),
         'src/core/runtime/**': all(95),
         'src/core/security/client-address*': all(95),
+        // A wrong answer from the release's npm check pushes a tag with nothing published.
+        'scripts/**': all(100),
       },
     },
     projects: [

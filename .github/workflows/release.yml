@@ -63,6 +63,10 @@ jobs:
           path: dist/
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ github.token }}
+      # semantic-release pushes the tag before it publishes, so an npm that can't do OIDC (below 11.5.1)
+      # must stop the job here, not at `npm publish`.
+      - if: steps.head.outputs.current == 'true'
+        run: node scripts/check-npm-trusted-publishing.mjs
       - if: steps.head.outputs.current == 'true'
         run: pnpm exec semantic-release
         env:
