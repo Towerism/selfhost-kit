@@ -18,10 +18,17 @@ describe('package.json', () => {
     expect(manifest.publishConfig).toEqual({ access: 'public', provenance: true });
   });
 
-  it('is an ESM-only, side-effect-free package for Node 22.12+', () => {
+  it('is an ESM-only, side-effect-free package for Node 24.11+', () => {
     expect(manifest.type).toBe('module');
     expect(manifest.sideEffects).toBe(false);
-    expect(manifest.engines).toEqual({ node: '>=22.12' });
+    expect(manifest.engines).toEqual({ node: '>=24.11' });
+  });
+
+  it('builds and releases on the Node major its engines floor names', () => {
+    const nodeVersion = readFileSync(new URL('../.node-version', import.meta.url), 'utf8').trim();
+    const floor = (manifest.engines as { node: string }).node;
+    expect(nodeVersion).toBe('24');
+    expect(floor.startsWith(`>=${nodeVersion}.`)).toBe(true);
   });
 
   it('has no runtime dependencies yet', () => {

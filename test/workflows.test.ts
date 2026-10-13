@@ -108,6 +108,16 @@ describe('release.yml', () => {
     expect(steps.some((s) => s.uses?.startsWith('actions/download-artifact@'))).toBe(true);
     expect(steps.at(-1)!.run).toBe('pnpm exec semantic-release');
   });
+
+  it('checks npm can publish with OIDC right before semantic-release, which pushes the tag', async () => {
+    const steps = (await load('release.yml')).jobs.release!.steps as (Step & { if?: string })[];
+    const check = steps.at(-2)!;
+    expect(check.run).toBe('node scripts/check-npm-trusted-publishing.mjs');
+    expect(check.if).toBe("steps.head.outputs.current == 'true'");
+    const setupNode = steps.findIndex((s) => s.uses?.startsWith('actions/setup-node@'));
+    expect(setupNode).toBeGreaterThanOrEqual(0);
+    expect(setupNode).toBeLessThan(steps.length - 2);
+  });
 });
 
 describe('npm credentials', () => {

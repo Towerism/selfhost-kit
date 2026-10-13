@@ -1,6 +1,6 @@
 # ADR-0003: One package with subpath exports, published to public npm with provenance
 
-- Status: Accepted (2026-10-13)
+- Status: Accepted (2026-10-13); amended 2026-10-13 (Node 24, below)
 - Date: 2026-10-13
 
 ## Context
@@ -47,7 +47,8 @@ Constraints:
 
 ## Decision
 
-- **One package**, `@towerism/selfhost-kit`, ESM only, Node ≥ 22.12 (both apps' `engines`), with these
+- **One package**, `@towerism/selfhost-kit`, ESM only, Node ≥ 24.11 (both apps' `engines`; was 22.12, see the
+  [Node 24 amendment](#amendment-2026-10-13-node-24)), with these
   `exports`:
 
   | Subpath | Contents | Peer dependencies |
@@ -79,3 +80,16 @@ Constraints:
   Both apps always have h3 through Nitro, and the `/nitro` contract tests run in each app.
 - (−) A public package invites outside users. The README states the scope (these two apps), and semver
   promises are made only for the documented API.
+
+## Amendment (2026-10-13): Node 24
+
+Approved by the owner with the spec on issue #9.
+
+- **Context.** The first automated release (`0.1.0`) failed at `npm publish` with `ENEEDAUTH`. The release
+  job ran Node 22, whose bundled npm (10.9.9) can't do the trusted-publishing OIDC exchange; npm does it
+  from 11.5.1, which every Node 24 release from 24.5.0 bundles.
+- **Decision.** The kit, its CI and its release job move to **Node 24**: `.node-version` is `24` and
+  `engines` is `>=24.11`, the first Node 24 LTS. Both apps are required to upgrade to Node 24 to adopt the kit.
+- **Also implemented.** The release job checks that npm is at least 11.5.1 before semantic-release runs, so
+  an npm that can't publish stops the job before any tag is pushed ([docs/releasing.md](../../releasing.md)).
+- **Consequence.** An app still on Node 22 gets an `engines` warning from npm or pnpm and is unsupported.
