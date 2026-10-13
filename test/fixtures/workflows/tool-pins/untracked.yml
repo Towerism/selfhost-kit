@@ -1,0 +1,24 @@
+name: Untracked
+on: push
+permissions:
+  contents: read
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: no annotation
+        env:
+          HADOLINT_VERSION: v2.14.0
+          HADOLINT_SHA256: 0000000000000000000000000000000000000000000000000000000000000002
+        run: echo "$HADOLINT_VERSION"
+      - name: bare version
+        env:
+          # renovate: datasource=github-release-attachments depName=rhysd/actionlint
+          ACTIONLINT_VERSION: 1.7.12
+          ACTIONLINT_SHA256: 0000000000000000000000000000000000000000000000000000000000000003
+        run: echo "$ACTIONLINT_VERSION"
+      - name: no checksum
+        env:
+          # renovate: datasource=github-release-attachments depName=gitleaks/gitleaks
+          GITLEAKS_VERSION: v8.30.1
+        run: echo "$GITLEAKS_VERSION"

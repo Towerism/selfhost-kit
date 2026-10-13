@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
 import { describe, expect, it } from 'vitest';
-import { findWorkflowViolations } from './helpers/workflow-policy.js';
+import { findToolPins, findWorkflowViolations } from './helpers/workflow-policy.js';
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 const workflows = join(repoRoot, '.github/workflows');
@@ -45,6 +45,47 @@ describe('workflow policy', () => {
   it('flags a workflow without top-level permissions', async () => {
     expect(await findWorkflowViolations(`${fixtures}no-permissions`)).toEqual([
       { file: 'build.yml', line: 1, rule: 'missing-permissions' },
+    ]);
+  });
+});
+
+describe('tool pins', () => {
+  // Renovate's own regex manager, so a pin it can't see fails here instead of going stale.
+  async function matchStrings(): Promise<string[]> {
+    const renovate = JSON.parse(await readFile(join(repoRoot, 'renovate.json'), 'utf8')) as {
+      customManagers: { matchStrings: string[] }[];
+    };
+    return renovate.customManagers.flatMap((manager) => manager.matchStrings);
+  }
+
+  it('are all tracked by Renovate in the committed workflows', async () => {
+    const { pins, violations } = await findToolPins(workflows, await matchStrings());
+    expect(violations).toEqual([]);
+    expect(pins.map((p) => [p.file, p.datasource, p.depName])).toEqual([
+      ['ci.yml', 'github-release-attachments', 'rhysd/actionlint'],
+      ['ci.yml', 'github-release-attachments', 'gitleaks/gitleaks'],
+    ]);
+    for (const pin of pins) {
+      expect(pin.currentValue).toMatch(/^v\d+\.\d+\.\d+$/);
+      expect(pin.currentDigest).toMatch(/^[0-9a-f]{64}$/);
+    }
+  });
+
+  it('flags a pin without an annotation, with a bare version or without a checksum', async () => {
+    const { pins, violations } = await findToolPins(`${fixtures}tool-pins`, await matchStrings());
+    expect(pins).toEqual([
+      {
+        file: 'tracked.yml',
+        datasource: 'github-release-attachments',
+        depName: 'koalaman/shellcheck',
+        currentValue: 'v0.11.0',
+        currentDigest: '0000000000000000000000000000000000000000000000000000000000000001',
+      },
+    ]);
+    expect(violations).toEqual([
+      { file: 'untracked.yml', line: 11, rule: 'untracked-tool-pin' },
+      { file: 'untracked.yml', line: 17, rule: 'untracked-tool-pin' },
+      { file: 'untracked.yml', line: 23, rule: 'untracked-tool-pin' },
     ]);
   });
 });

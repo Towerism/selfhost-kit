@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { analyzeCommits } from '@semantic-release/commit-analyzer';
 import { generateNotes } from '@semantic-release/release-notes-generator';
 import { describe, expect, it } from 'vitest';
@@ -66,6 +67,19 @@ describe('release config', () => {
       expect(await bump(`${type}: tidy up`)).toBeNull();
     },
   );
+
+  it("releases nothing for Renovate's tooling updates, security ones included", async () => {
+    const renovate = JSON.parse(await readFile(new URL('../renovate.json', import.meta.url), 'utf8')) as {
+      packageRules: { semanticCommitType?: string }[];
+    };
+    // `chore` is what config:recommended gives devDependencies; the rules add the rest.
+    const types = new Set(['chore', ...renovate.packageRules.flatMap((r) => r.semanticCommitType ?? [])]);
+    for (const type of types) {
+      expect(await bump(`${type}(deps): update dependency foo to v1.2.3`)).toBeNull();
+      expect(await bump(`${type}(deps): update dependency foo to v1.2.3 [security]`)).toBeNull();
+    }
+    expect([...types].sort()).toEqual(['chore', 'ci']);
+  });
 
   it('lists security fixes first, under Security, with their advisory', async () => {
     const markdown = await notes([
