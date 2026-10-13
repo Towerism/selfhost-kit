@@ -42,3 +42,24 @@ describe('core boundary lint rule', () => {
     },
   );
 });
+
+describe('production code never imports /testing', () => {
+  it.each(['src/core/example.ts', 'src/nitro/example.ts'])('rejects it in %s', async (filePath) => {
+    const [result] = await eslint.lintText("import { fakeClock } from '../testing/clock.js';", { filePath });
+    const messages = result!.messages.filter((m) => m.message.includes('src/testing is for tests only'));
+    expect(messages).toHaveLength(1);
+  });
+
+  it('rejects vitest in src/core', async () => {
+    expect(await boundaryMessages("import { describe } from 'vitest';", 'src/core/example.ts')).toHaveLength(
+      1,
+    );
+  });
+
+  it('allows /testing to import the core', async () => {
+    const [result] = await eslint.lintText("import { createVault } from '../core/vault/index.js';", {
+      filePath: 'src/testing/example.ts',
+    });
+    expect(result!.messages.filter((m) => m.ruleId === 'no-restricted-imports')).toEqual([]);
+  });
+});
