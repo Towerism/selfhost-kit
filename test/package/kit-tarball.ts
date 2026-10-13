@@ -1,8 +1,8 @@
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
@@ -27,8 +27,11 @@ export async function packKit(): Promise<PackedKit> {
   const dir = await mkdtemp(join(tmpdir(), 'selfhost-kit-pack-'));
   const userconfig = join(dir, 'npmrc');
   await writeFile(userconfig, '');
+  // pnpm sets NODE_PATH for scripts; passed on, it would let a consumer resolve the repo's whole tree.
+  const inherited = { ...process.env };
+  Reflect.deleteProperty(inherited, 'NODE_PATH');
   const env = {
-    ...process.env,
+    ...inherited,
     npm_config_cache: join(dir, 'npm-cache'),
     npm_config_userconfig: userconfig,
     npm_config_update_notifier: 'false',
@@ -53,15 +56,28 @@ export interface Consumer {
   tsc: (moduleResolution: 'NodeNext' | 'Bundler') => Promise<void>;
 }
 
-/** A fresh ESM project with the tarball installed offline, and nothing else. */
-export async function makeConsumer(kit: PackedKit, name: string): Promise<Consumer> {
+/**
+ * A fresh ESM project with the tarball installed the way a package manager lays it out, offline and with no
+ * package-manager cache: the tarball is unpacked into `node_modules/@towerism/selfhost-kit`, and exactly its
+ * declared `dependencies` (plus any `peers` asked for) are linked to the copies this repo already installed.
+ * Anything the built code imports without declaring it fails to resolve.
+ */
+export async function makeConsumer(kit: PackedKit, name: string, peers: string[] = []): Promise<Consumer> {
   const dir = join(kit.dir, name);
-  await mkdir(dir);
+  const scope = join(dir, 'node_modules', '@towerism');
+  await mkdir(scope, { recursive: true });
   await writeFile(join(dir, 'package.json'), JSON.stringify({ name, private: true, type: 'module' }));
-  await run('npm', ['install', '--offline', '--no-audit', '--no-fund', '--ignore-scripts', kit.tarball], {
-    cwd: dir,
-    env: kit.env,
-  });
+  await run('tar', ['-xzf', kit.tarball, '-C', scope]);
+  await rename(join(scope, 'package'), join(scope, 'selfhost-kit'));
+
+  const manifest = JSON.parse(await readFile(join(scope, 'selfhost-kit', 'package.json'), 'utf8')) as {
+    dependencies?: Record<string, string>;
+  };
+  for (const dependency of [...Object.keys(manifest.dependencies ?? {}), ...peers]) {
+    const target = join(dir, 'node_modules', dependency);
+    await mkdir(dirname(target), { recursive: true });
+    await symlink(await realpath(join(repoRoot, 'node_modules', dependency)), target);
+  }
 
   return {
     dir,
@@ -79,7 +95,8 @@ export async function makeConsumer(kit: PackedKit, name: string): Promise<Consum
             moduleResolution,
             strict: true,
             noEmit: true,
-            types: [],
+            // Every consumer is a Node app: the vault's API is in Buffers.
+            types: ['node'],
           },
           files: ['consumer.ts'],
         }),

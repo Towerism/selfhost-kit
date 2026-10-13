@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { findCoreBoundaryViolations } from './helpers/core-boundary.js';
+import { findCoreAllowlistViolations, findCoreBoundaryViolations } from './helpers/core-boundary.js';
 
 const fixtures = fileURLToPath(new URL('fixtures/core-boundary/', import.meta.url));
 const realCore = fileURLToPath(new URL('../src/core/', import.meta.url));
@@ -25,5 +25,25 @@ describe('core boundary scanner', () => {
 
   it('finds nothing in the real src/core', async () => {
     expect(await findCoreBoundaryViolations(realCore)).toEqual([]);
+  });
+});
+
+describe('core allowlist scanner', () => {
+  it('allows only relative files, node: built-ins, pino and pino-pretty', async () => {
+    expect(await findCoreAllowlistViolations(`${fixtures}allowlist/ok`)).toEqual([]);
+  });
+
+  it('reports every other package, a bare built-in and a pino subpath', async () => {
+    const violations = await findCoreAllowlistViolations(`${fixtures}allowlist/outside`);
+    expect(violations.map((v) => `${v.file}:${String(v.line)} ${v.specifier}`).sort()).toEqual([
+      'bare-builtin.ts:1 fs',
+      'pino-subpath.ts:1 pino/file',
+      'third-party.ts:1 left-pad',
+      'vitest.ts:1 vitest',
+    ]);
+  });
+
+  it('finds nothing outside the allowlist in the real src/core', async () => {
+    expect(await findCoreAllowlistViolations(realCore)).toEqual([]);
   });
 });

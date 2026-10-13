@@ -31,8 +31,10 @@ describe('package.json', () => {
     expect(floor.startsWith(`>=${nodeVersion}.`)).toBe(true);
   });
 
-  it('has no runtime dependencies yet', () => {
-    expect(manifest.dependencies ?? {}).toEqual({});
+  it('depends at runtime on pino and pino-pretty only, each on a caret range (ADR-0003)', () => {
+    const dependencies = manifest.dependencies as Record<string, string>;
+    expect(Object.keys(dependencies).sort()).toEqual(['pino', 'pino-pretty']);
+    for (const range of Object.values(dependencies)) expect(range).toMatch(/^\^[1-9]\d*\.\d+\.\d+$/);
   });
 
   it('declares h3 and vitest as optional peers only', () => {

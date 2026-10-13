@@ -19,8 +19,11 @@ reaches both apps:
 It ships as one npm package, `@towerism/selfhost-kit`, with a framework-free core and h3/Nitro adapters on
 `@towerism/selfhost-kit/nitro`.
 
-> **Status: K0 (repo foundation) delivered. No API yet.** The package, its toolchain, CI and the release
-> pipeline are in place, and the entry points are empty until milestone K1 (core) and K2 (Nitro adapters).
+> **Status: K1 (core) delivered.** The framework-free core is available from `@towerism/selfhost-kit`: the
+> vault, secret resolution, the runtime env and launcher, the logger with redaction and request ids, the
+> CSP/header builder, the rate limiter and trusted proxies, and setup codes. `@towerism/selfhost-kit/testing`
+> has the vault and redaction contract suites, the v1 vault vectors, secret-dir fixtures and a fake clock.
+> `/nitro` stays empty until K2 (Nitro adapters).
 
 ## Install
 
@@ -50,6 +53,7 @@ To report a vulnerability, see [SECURITY.md](SECURITY.md). Don't open a public i
 pnpm install --frozen-lockfile
 pnpm lint && pnpm typecheck && pnpm test   # test includes the coverage gate
 pnpm build && pnpm check:package && pnpm test:package
+pnpm bench                                 # logger throughput, by hand; report it in PRs that touch logging
 ```
 
 Commits follow [Conventional Commits](https://www.conventionalcommits.org/): they decide the next version.
