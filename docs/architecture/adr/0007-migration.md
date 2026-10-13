@@ -1,6 +1,6 @@
 # ADR-0007: Migrate attendance piece by piece behind its existing tests; Genie starts on the kit
 
-- Status: Proposed
+- Status: Accepted (2026-10-13)
 - Date: 2026-10-13
 
 ## Context

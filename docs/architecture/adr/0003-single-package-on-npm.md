@@ -1,6 +1,6 @@
 # ADR-0003: One package with subpath exports, published to public npm with provenance
 
-- Status: Proposed
+- Status: Accepted (2026-10-13)
 - Date: 2026-10-13
 
 ## Context

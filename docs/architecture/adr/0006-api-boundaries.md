@@ -1,6 +1,6 @@
 # ADR-0006: Framework-free core, thin Nitro adapters, and the `/data` contract
 
-- Status: Proposed
+- Status: Accepted (2026-10-13)
 - Date: 2026-10-13
 
 ## Context

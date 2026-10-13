@@ -19,7 +19,7 @@ reaches both apps:
 It ships as one npm package, `@towerism/selfhost-kit`, with a framework-free core and h3/Nitro adapters on
 `@towerism/selfhost-kit/nitro`.
 
-> **Status: architecture proposed. No code yet.** Nothing is published until the architecture is approved.
+> **Status: architecture accepted (2026-10-13). No code yet.** Implementation starts with milestone K0.
 
 ## Read first
 

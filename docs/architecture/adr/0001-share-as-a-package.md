@@ -1,6 +1,6 @@
 # ADR-0001: Share the infrastructure as a package, not a layer, template or copy
 
-- Status: Proposed
+- Status: Accepted (2026-10-13)
 - Date: 2026-10-13
 
 ## Context

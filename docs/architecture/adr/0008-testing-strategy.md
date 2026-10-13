@@ -1,6 +1,6 @@
 # ADR-0008: Testing strategy — KATs, contract suites the apps run, fake clock
 
-- Status: Proposed
+- Status: Accepted (2026-10-13)
 - Date: 2026-10-13
 
 ## Context

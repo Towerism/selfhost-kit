@@ -1,6 +1,6 @@
 # ADR-0005: Semver, compatibility rules and the security-fix path
 
-- Status: Proposed
+- Status: Accepted (2026-10-13)
 - Date: 2026-10-13
 
 ## Context

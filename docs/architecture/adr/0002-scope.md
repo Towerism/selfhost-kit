@@ -1,6 +1,6 @@
 # ADR-0002: Scope — what the kit holds, and why the job runner stays out
 
-- Status: Proposed
+- Status: Accepted (2026-10-13)
 - Date: 2026-10-13
 
 ## Context

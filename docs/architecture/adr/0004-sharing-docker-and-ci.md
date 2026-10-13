@@ -1,6 +1,6 @@
 # ADR-0004: Share Docker pieces as package assets and CI as reusable workflows
 
-- Status: Proposed
+- Status: Accepted (2026-10-13)
 - Date: 2026-10-13
 
 ## Context
