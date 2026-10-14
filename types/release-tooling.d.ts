@@ -32,3 +32,10 @@ declare module '@semantic-release/release-notes-generator' {
     context: Record<string, unknown>,
   ): Promise<string>;
 }
+
+declare module '@semantic-release/exec' {
+  export function verifyRelease(
+    pluginConfig: Record<string, unknown>,
+    context: Record<string, unknown>,
+  ): Promise<void>;
+}

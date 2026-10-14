@@ -68,17 +68,30 @@ describe('release config', () => {
     },
   );
 
-  it("releases nothing for Renovate's tooling updates, security ones included", async () => {
+  async function renovateRules() {
     const renovate = JSON.parse(await readFile(new URL('../renovate.json', import.meta.url), 'utf8')) as {
-      packageRules: { semanticCommitType?: string }[];
+      packageRules: { semanticCommitType?: string; matchDepNames?: string[] }[];
     };
+    return renovate.packageRules;
+  }
+  // What the kit ships, as opposed to the tooling that builds and checks it.
+  const SHIPPED = ['benbjohnson/litestream'];
+
+  it("releases nothing for Renovate's tooling updates, security ones included", async () => {
+    const tooling = (await renovateRules()).filter((r) => !r.matchDepNames?.some((d) => SHIPPED.includes(d)));
     // `chore` is what config:recommended gives devDependencies; the rules add the rest.
-    const types = new Set(['chore', ...renovate.packageRules.flatMap((r) => r.semanticCommitType ?? [])]);
+    const types = new Set(['chore', ...tooling.flatMap((r) => r.semanticCommitType ?? [])]);
     for (const type of types) {
       expect(await bump(`${type}(deps): update dependency foo to v1.2.3`)).toBeNull();
       expect(await bump(`${type}(deps): update dependency foo to v1.2.3 [security]`)).toBeNull();
     }
     expect([...types].sort()).toEqual(['chore', 'ci']);
+  });
+
+  it('releases a Litestream update as a patch, because the Docker assets install it', async () => {
+    const rules = (await renovateRules()).filter((r) => r.matchDepNames?.some((d) => SHIPPED.includes(d)));
+    expect(rules.map((r) => r.semanticCommitType)).toEqual(['fix']);
+    expect(await bump('fix(deps): update dependency benbjohnson/litestream to v0.5.18')).toBe('patch');
   });
 
   it('lists security fixes first, under Security, with their advisory', async () => {

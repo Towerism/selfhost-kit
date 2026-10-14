@@ -29,11 +29,25 @@
       "types": "./dist/testing/index.d.ts",
       "default": "./dist/testing/index.js"
     },
+    "./release-config": {
+      "types": "./release-config/index.d.ts",
+      "default": "./release-config/index.js"
+    },
+    "./docker/*": "./docker/*",
     "./package.json": "./package.json"
+  },
+  "bin": {
+    "selfhost-kit": "./bin/selfhost-kit.mjs"
   },
   "files": [
     "dist/**/*.js",
     "dist/**/*.d.ts",
+    "bin/selfhost-kit.mjs",
+    "docker/entrypoint.sh",
+    "docker/fetch-litestream.sh",
+    "docker/litestream.yml",
+    "release-config/*.js",
+    "release-config/*.d.ts",
     "SECURITY.md"
   ],
   "publishConfig": {
@@ -47,14 +61,27 @@
     "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
     "check:package": "publint --strict && attw --pack . --profile esm-only",
     "test:package": "vitest run --project package",
-    "bench": "vitest bench --run --project 'unit (bench)'"
+    "bench": "vitest bench --run --project 'unit (bench)'",
+    "test:entrypoint": "docker build -f test/entrypoint/Dockerfile --target fixture -t selfhost-kit-entrypoint:test . && test/entrypoint/run.sh selfhost-kit-entrypoint:test"
   },
   "peerDependencies": {
+    "@semantic-release/exec": "^7",
+    "conventional-changelog-conventionalcommits": "^9",
     "h3": "^1.15",
+    "semantic-release": "^24 || ^25",
     "vitest": "^3.2 || ^4 || ^5"
   },
   "peerDependenciesMeta": {
+    "@semantic-release/exec": {
+      "optional": true
+    },
+    "conventional-changelog-conventionalcommits": {
+      "optional": true
+    },
     "h3": {
+      "optional": true
+    },
+    "semantic-release": {
       "optional": true
     },
     "vitest": {
@@ -65,6 +92,7 @@
     "@arethetypeswrong/cli": "^0.18.5",
     "@eslint/js": "^10.0.1",
     "@semantic-release/commit-analyzer": "^13.0.1",
+    "@semantic-release/exec": "^7.1.0",
     "@semantic-release/github": "^12.0.10",
     "@semantic-release/npm": "^13.2.0",
     "@semantic-release/release-notes-generator": "^14.1.1",

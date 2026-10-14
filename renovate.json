@@ -19,6 +19,14 @@
       "matchStrings": [
         "# renovate: datasource=(?<datasource>[a-z-]+) depName=(?<depName>[\\w.-]+/[\\w.-]+)\\n\\s+[A-Z0-9_]+_VERSION: (?<currentValue>v\\d\\S*)\\n\\s+[A-Z0-9_]+_SHA256: (?<currentDigest>[0-9a-f]{64})"
       ]
+    },
+    {
+      "customType": "regex",
+      "description": "The Litestream release the Docker assets install: a version and the sha256 of its amd64 archive",
+      "managerFilePatterns": ["/^docker/[^/]+\\.sh$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>[a-z-]+) depName=(?<depName>[\\w.-]+/[\\w.-]+)\\n[A-Z0-9_]+_VERSION=(?<currentValue>v\\d\\S*)\\n[A-Z0-9_]+_SHA256=(?<currentDigest>[0-9a-f]{64})"
+      ]
     }
   ],
   "packageRules": [
@@ -42,6 +50,11 @@
       "matchDepTypes": ["devDependencies"],
       "matchUpdateTypes": ["patch"],
       "automerge": true
+    },
+    {
+      "description": "A new Litestream changes what the kit ships, so it releases as a patch (ADR-0005)",
+      "matchDepNames": ["benbjohnson/litestream"],
+      "semanticCommitType": "fix"
     }
   ]
 }

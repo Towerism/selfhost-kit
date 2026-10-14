@@ -1,0 +1,139 @@
+name: App image
+
+# Reusable (ADR-0004): builds an app's image, runs the app's smoke scripts against it, and only then
+# publishes it to GHCR. An app calls it from its CI, pinned by full commit SHA (never a tag):
+#
+#   image:
+#     needs: check
+#     permissions: { contents: read, packages: write }
+#     uses: Towerism/selfhost-kit/.github/workflows/app-image.yml@<sha> # vX.Y.Z
+#     with:
+#       image-name: ghcr.io/towerism/<app>
+#       smoke-scripts: |
+#         test/docker/smoke.sh
+#
+# Tags: `edge` and `sha-<short>` from pushes to main, `pr-<n>` from pull requests of the same repository
+# (fork PRs only build and smoke-test). The release tags X.Y.Z / X.Y / latest come from app-release.yml,
+# on the digest this workflow outputs. amd64 only: Unraid is the only target.
+on:
+  workflow_call:
+    inputs:
+      image-name:
+        description: The image to publish, e.g. ghcr.io/towerism/play-pokemon-attendance
+        type: string
+        required: true
+      target:
+        description: The Dockerfile stage to build
+        type: string
+        default: app
+      file:
+        description: The Dockerfile, relative to the repository root
+        type: string
+        default: Dockerfile
+      context:
+        description: The build context, relative to the repository root
+        type: string
+        default: .
+      smoke-scripts:
+        description: Programs to run in order, one per line, each with the built image's local tag as its argument
+        type: string
+        default: ''
+      publish:
+        description: Publish the image when the event allows it (false only builds and smoke-tests)
+        type: boolean
+        default: true
+    outputs:
+      digest:
+        description: The published image's manifest digest, or empty when nothing was published
+        value: ${{ jobs.image.outputs.digest }}
+
+permissions:
+  contents: read
+
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build for the smoke tests
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.file }}
+          target: ${{ inputs.target }}
+          platforms: linux/amd64
+          load: true
+          tags: app-image:smoke-test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke tests
+        env:
+          SMOKE_SCRIPTS: ${{ inputs.smoke-scripts }}
+          IMAGE: app-image:smoke-test
+        run: |
+          while IFS= read -r script; do
+            script="$(printf '%s' "$script" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+            [ -z "$script" ] && continue
+            case "$script" in */*) ;; *) script="./$script" ;; esac
+            echo "::group::$script $IMAGE"
+            "$script" "$IMAGE"
+            echo "::endgroup::"
+          done <<< "$SMOKE_SCRIPTS"
+
+      # Fork PRs get a read-only token: they stop after the smoke tests.
+      - name: Decide whether to publish
+        id: publish
+        env:
+          PUBLISH: ${{ inputs.publish }}
+          EVENT: ${{ github.event_name }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          enabled=false
+          if [ "$PUBLISH" = true ] && { [ "$EVENT" = push ] || [ "$HEAD_REPO" = "$REPO" ]; }; then
+            enabled=true
+          fi
+          echo "enabled=$enabled" >> "$GITHUB_OUTPUT"
+
+      - name: Image tags
+        id: meta
+        if: steps.publish.outputs.enabled == 'true'
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ inputs.image-name }}
+          tags: |
+            type=edge,branch=main
+            type=ref,event=pr
+            type=sha,enable=${{ github.event_name == 'push' }}
+
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        if: steps.publish.outputs.enabled == 'true'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Publish to GHCR
+        id: push
+        if: steps.publish.outputs.enabled == 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.file }}
+          target: ${{ inputs.target }}
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha

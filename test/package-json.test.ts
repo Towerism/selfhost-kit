@@ -37,26 +37,39 @@ describe('package.json', () => {
     for (const range of Object.values(dependencies)) expect(range).toMatch(/^\^[1-9]\d*\.\d+\.\d+$/);
   });
 
-  it('declares h3 and vitest as optional peers only', () => {
-    expect(Object.keys(manifest.peerDependencies as object).sort()).toEqual(['h3', 'vitest']);
-    expect((manifest.peerDependencies as Record<string, string>).h3).toBe('^1.15');
-    expect(manifest.peerDependenciesMeta).toEqual({
-      h3: { optional: true },
-      vitest: { optional: true },
-    });
+  it("declares h3, vitest and the release config's plugins as optional peers only", () => {
+    const peers = manifest.peerDependencies as Record<string, string>;
+    expect(Object.keys(peers).sort()).toEqual([
+      '@semantic-release/exec',
+      'conventional-changelog-conventionalcommits',
+      'h3',
+      'semantic-release',
+      'vitest',
+    ]);
+    expect(peers.h3).toBe('^1.15');
+    for (const name of Object.keys(peers)) {
+      expect((manifest.peerDependenciesMeta as Record<string, unknown>)[name]).toEqual({ optional: true });
+    }
+    expect(Object.keys(manifest.peerDependenciesMeta as object).sort()).toEqual(Object.keys(peers).sort());
   });
 
-  it('exports exactly the three entry points and package.json, types first', () => {
+  it('exports the three entry points, the release config, the Docker assets and package.json, types first', () => {
     expect(manifest.exports).toEqual({
       '.': { types: './dist/core/index.d.ts', default: './dist/core/index.js' },
       './nitro': { types: './dist/nitro/index.d.ts', default: './dist/nitro/index.js' },
       './testing': { types: './dist/testing/index.d.ts', default: './dist/testing/index.js' },
+      './release-config': { types: './release-config/index.d.ts', default: './release-config/index.js' },
+      './docker/*': './docker/*',
       './package.json': './package.json',
     });
-    for (const entry of ['.', './nitro', './testing']) {
+    for (const entry of ['.', './nitro', './testing', './release-config']) {
       const conditions = Object.keys((manifest.exports as Record<string, object>)[entry]!);
       expect(conditions[0]).toBe('types');
     }
+  });
+
+  it('installs the selfhost-kit command', () => {
+    expect(manifest.bin).toEqual({ 'selfhost-kit': './bin/selfhost-kit.mjs' });
   });
 
   it('pins pnpm exactly', () => {

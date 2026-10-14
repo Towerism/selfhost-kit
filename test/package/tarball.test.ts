@@ -12,8 +12,9 @@ afterAll(async () => {
 });
 
 describe('published tarball', () => {
-  it('contains only the manifest, docs and compiled JS with its declarations', () => {
-    const allowed = /^(package\.json|README\.md|LICENSE|SECURITY\.md|dist\/.+\.(js|d\.ts))$/;
+  it('contains only the manifest, docs, compiled JS with its declarations, the bin and the ops assets', () => {
+    const allowed =
+      /^(package\.json|README\.md|LICENSE|SECURITY\.md|dist\/.+\.(js|d\.ts)|bin\/selfhost-kit\.mjs|docker\/(entrypoint\.sh|fetch-litestream\.sh|litestream\.yml)|release-config\/(index|notes)\.js|release-config\/index\.d\.ts)$/;
     expect(kit.files.filter((path) => !allowed.test(path))).toEqual([]);
   });
 
@@ -25,6 +26,21 @@ describe('published tarball', () => {
           `dist/${entry}/index.d.ts`,
         ]),
       ),
+    );
+  });
+
+  it('ships the bin, the Docker assets and the release config', () => {
+    expect(kit.files).toEqual(
+      expect.arrayContaining([
+        'bin/selfhost-kit.mjs',
+        'dist/cli/index.js',
+        'docker/entrypoint.sh',
+        'docker/fetch-litestream.sh',
+        'docker/litestream.yml',
+        'release-config/index.js',
+        'release-config/index.d.ts',
+        'release-config/notes.js',
+      ]),
     );
   });
 
