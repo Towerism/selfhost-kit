@@ -25,11 +25,13 @@ SECOND_DATA="$(mktemp -d)"
 BROKEN_DATA="$(mktemp -d)"
 DENIED_DATA="$(mktemp -d)"
 REDACT_DATA="$(mktemp -d)"
+LINK_DATA="$(mktemp -d)"
+OUTSIDE="$(mktemp -d)" # another bind mount, like a host path the container can see
 REPLICA_MAIN="$(mktemp -d)"
 REPLICA_ARGS="$(mktemp -d)"
 UNREADABLE="$(mktemp -d)" # mode 0700, owned by the runner: PUID can't use it
 ALL_DIRS=("$ROOT_DATA" "$UMASK_DATA" "$USER_DATA" "$ARGS_DATA" "$FIRST_DATA" "$SECOND_DATA" "$BROKEN_DATA"
-  "$DENIED_DATA" "$REDACT_DATA" "$REPLICA_MAIN" "$REPLICA_ARGS" "$UNREADABLE")
+  "$DENIED_DATA" "$REDACT_DATA" "$LINK_DATA" "$OUTSIDE" "$REPLICA_MAIN" "$REPLICA_ARGS" "$UNREADABLE")
 
 as_root() { # as_root <dir> <shell script>: runs the script on <dir> mounted at /x, as root
   docker run --rm -v "$1:/x" --entrypoint sh "$IMAGE" -c "$2"
@@ -161,6 +163,23 @@ check "a graceful stop exits cleanly (not SIGKILL)" test "$(exit_code)" != 137
 docker rm "$NAME" >/dev/null
 start "$ROOT_DATA" "$REPLICA_MAIN" -e PUID=$PUID -e PGID=$PGID
 check "a restart on the same /data keeps everything owned by PUID:PGID" test -z "$(wrong_owner)"
+stop_and_remove
+
+# A link left by an earlier PUID matches the ownership fix on every boot; chown must re-own the link,
+# never what it points at.
+echo "started as root: symlinks under /data after a PUID change"
+as_root "$OUTSIDE" 'touch /x/host-file && mkdir /x/host-dir && chown 0:0 /x/host-file /x/host-dir'
+as_root "$LINK_DATA" 'ln -s /usr/local/bin/entrypoint.sh /x/image-link && ln -s /outside/host-file /x/host-link \
+  && ln -s /outside/host-dir /x/dir-link && ln -s /nonexistent /x/dangling-link \
+  && chown -h 4321:4321 /x/image-link /x/host-link /x/dir-link /x/dangling-link'
+start "$LINK_DATA" "$REPLICA_MAIN" -e PUID=$PUID -e PGID=$PGID -v "$OUTSIDE:/outside"
+check "a file in the image a link points at stays root:root" \
+  test "$(owner_of /usr/local/bin/entrypoint.sh)" = "0:0"
+check "a file on another mount a link points at stays root:root" \
+  test "$(owner_of /outside/host-file)" = "0:0"
+check "a directory on another mount a link points at stays root:root" \
+  test "$(owner_of /outside/host-dir)" = "0:0"
+check "the links themselves, a dangling one included, are owned by PUID:PGID" test -z "$(wrong_owner)"
 stop_and_remove
 
 echo "UMASK=027"

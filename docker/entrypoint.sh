@@ -32,8 +32,10 @@ esac
 AS_APP_USER=""
 if [ "$(id -u)" = "0" ]; then
   mkdir -p "$DATA_DIR"
-  # Only touch what is wrong: appdata can be large and on slow array disks.
-  find "$DATA_DIR" \( ! -user "$PUID" -o ! -group "$PGID" \) -exec chown "$PUID:$PGID" {} +
+  # Only touch what is wrong: appdata can be large and on slow array disks. -h: re-own a symlink itself,
+  # never its target (a link the app left could point at any file the container can see). This guards the
+  # last path component; it assumes nothing else writes to /data while the container starts.
+  find "$DATA_DIR" \( ! -user "$PUID" -o ! -group "$PGID" \) -exec chown -h "$PUID:$PGID" {} +
   AS_APP_USER="gosu $PUID:$PGID"
 fi
 
