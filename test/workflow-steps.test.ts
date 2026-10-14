@@ -97,3 +97,76 @@ describe('app-image.yml publish', () => {
     if (!('status' in push)) expect(run.stdout).toMatch(/^::error::/m);
   });
 });
+
+describe('app-release.yml', () => {
+  const SHA = 'a'.repeat(40);
+  const OTHER = 'b'.repeat(40);
+  const TAG_OBJECT = 'c'.repeat(40);
+  const env = { GITHUB_REPOSITORY: 'o/app', GITHUB_SHA: SHA, GH_TOKEN: 'synthetic-token' };
+  const refHeadsMain = ['api', 'repos/o/app/git/ref/heads/main'];
+  const refTag = ['api', 'repos/o/app/git/ref/tags/v1.2.3'];
+
+  describe("checking that main hasn't moved on", () => {
+    const check = (answer: { stdout?: string; status?: number }) =>
+      runStep('app-release.yml', "Check that main hasn't moved on", {
+        env,
+        stubs: { gh: [{ argv: refHeadsMain, ...answer }] },
+      });
+
+    it('is current when main is still the commit the dry run saw', async () => {
+      const run = await check({ stdout: `${SHA}\n` });
+      expect(run.code).toBe(0);
+      expect(run.outputs).toEqual({ current: 'true' });
+      expect(calls(run)).toEqual([['gh', ...refHeadsMain, '--jq', '.object.sha']]);
+    });
+
+    it("isn't current, and succeeds, when main has moved on", async () => {
+      const run = await check({ stdout: `${OTHER}\n` });
+      expect(run.code).toBe(0);
+      expect(run.outputs).toEqual({ current: 'false' });
+      expect(run.stdout).toContain(`main is at ${OTHER}, not ${SHA}: the newer commit's run releases.`);
+    });
+
+    it('fails when main cannot be read', async () => {
+      const run = await check({ status: 1 });
+      expect(run.code).not.toBe(0);
+      expect(run.outputs).toEqual({});
+    });
+  });
+
+  describe('checking the git tag after the release', () => {
+    const verify = (answers: { argv: string[]; stdout?: string; status?: number }[]) =>
+      runStep('app-release.yml', 'Check the git tag', {
+        env: { ...env, VERSION: '1.2.3' },
+        stubs: { gh: answers },
+      });
+
+    it('passes for a lightweight tag on the released commit', async () => {
+      const run = await verify([{ argv: refTag, stdout: `commit ${SHA}\n` }]);
+      expect(run.code).toBe(0);
+      expect(calls(run)).toEqual([['gh', ...refTag, '--jq', '.object.type + " " + .object.sha']]);
+    });
+
+    it('follows an annotated tag to its commit', async () => {
+      const run = await verify([
+        { argv: refTag, stdout: `tag ${TAG_OBJECT}\n` },
+        { argv: ['api', `repos/o/app/git/tags/${TAG_OBJECT}`], stdout: `${SHA}\n` },
+      ]);
+      expect(run.code).toBe(0);
+      expect(calls(run)).toEqual([
+        ['gh', ...refTag, '--jq', '.object.type + " " + .object.sha'],
+        ['gh', 'api', `repos/o/app/git/tags/${TAG_OBJECT}`, '--jq', '.object.sha'],
+      ]);
+    });
+
+    it.each([
+      ['no tag', [{ argv: refTag, status: 1 }]],
+      ['a tag on another commit', [{ argv: refTag, stdout: `commit ${OTHER}\n` }]],
+    ])('fails loudly on %s', async (_, answers) => {
+      const run = await verify(answers);
+      expect(run.code).not.toBe(0);
+      expect(run.stdout).toMatch(new RegExp(`^::error::.*v1\\.2\\.3.*${SHA}`, 'm'));
+      expect(run.stdout).toContain('latest');
+    });
+  });
+});

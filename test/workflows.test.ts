@@ -299,7 +299,7 @@ describe('app-release.yml', () => {
     expect(job['timeout-minutes']).toBe(15);
   });
 
-  it('tags the tested image before it pushes the git tag and the GitHub Release', async () => {
+  it('tags the tested image before it pushes the git tag and the GitHub Release, then checks the tag', async () => {
     const job = (await load('app-release.yml')).jobs.release!;
     expect(stepNames(job)).toEqual([
       'actions/checkout',
@@ -308,13 +308,32 @@ describe('app-release.yml', () => {
       'pnpm install --frozen-lockfile',
       'Next version (dry run)',
       'Decide whether to release',
+      "Check that main hasn't moved on",
       'docker/login-action',
       'Tag the image X.Y.Z, X.Y, latest',
       'Git tag and GitHub Release',
+      'Check the git tag',
     ]);
     expect(job.steps[4]!.run).toBe('pnpm exec semantic-release --dry-run');
-    expect(job.steps.at(-1)!.run).toBe('pnpm exec semantic-release');
-    for (const step of job.steps.slice(6)) expect(step.if).toBe("steps.next.outputs.version != ''");
+    expect(job.steps.at(-2)!.run).toBe('pnpm exec semantic-release');
+    expect(job.steps[6]!.if).toBe("steps.next.outputs.version != ''");
+    for (const step of job.steps.slice(7)) {
+      expect(step.if).toBe("steps.next.outputs.version != '' && steps.head.outputs.current == 'true'");
+    }
+  });
+
+  it('reads main and the tag through the API with the job token, so private callers work', async () => {
+    const job = (await load('app-release.yml')).jobs.release!;
+    for (const name of ["Check that main hasn't moved on", 'Check the git tag']) {
+      const step = job.steps.find((s) => s.name === name)!;
+      expect(step.env?.GH_TOKEN).toBe('${{ github.token }}');
+      expect(step.run).toContain('gh api "repos/$GITHUB_REPOSITORY/git/ref/');
+    }
+    expect(JSON.stringify(job.steps)).not.toContain('ls-remote');
+  });
+
+  it('runs its shell steps with bash -eo pipefail', async () => {
+    expect((await load('app-release.yml')).defaults).toEqual({ run: { shell: 'bash' } });
   });
 
   it('refuses to release when the image job published no digest', async () => {
