@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { lstat, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -85,12 +86,87 @@ describe('selfhost-kit docker-assets', () => {
     expect(err).toEqual([]);
   });
 
+  it.each([
+    [['docker-assets', '--help']],
+    [['docker-assets', 'out', '-h']],
+    [['-h', 'docker-assets', 'out']],
+    [['docker-assets', '-x', '--help']],
+  ])('treats help anywhere in %j as help, creating nothing', async (argv) => {
+    const cwd = process.cwd();
+    process.chdir(dir);
+    try {
+      expect(await runCli(argv, io, { assetsDir: assets })).toBe(0);
+    } finally {
+      process.chdir(cwd);
+    }
+    expect(out).toEqual([USAGE]);
+    expect(err).toEqual([]);
+    for (const name of ['out', '--help', '-x']) expect(existsSync(join(dir, name))).toBe(false);
+  });
+
+  it.each(['-x', '--output'])('refuses a <dir> that looks like an option: %s', async (target) => {
+    const cwd = process.cwd();
+    process.chdir(dir);
+    try {
+      expect(await runCli(['docker-assets', target], io, { assetsDir: assets })).toBe(2);
+    } finally {
+      process.chdir(cwd);
+    }
+    expect(err).toEqual([USAGE]);
+    expect(out).toEqual([]);
+    expect(existsSync(join(dir, target))).toBe(false);
+  });
+
   it('returns 1 with the reason when the target cannot be written', async () => {
     const file = join(dir, 'a-file');
     await writeFile(file, '');
     expect(await runCli(['docker-assets', file], io, { assetsDir: assets })).toBe(1);
     expect(err).toHaveLength(1);
     expect(err[0]).toMatch(/^selfhost-kit: .*(EEXIST|ENOTDIR)/);
+  });
+
+  describe('when a destination already exists as something else', () => {
+    let target: string;
+    let outside: string;
+    beforeEach(async () => {
+      target = join(dir, 'out');
+      outside = join(dir, 'outside');
+      await mkdir(target);
+      await writeFile(outside, 'outside', { mode: 0o600 });
+    });
+
+    it('replaces a symlink with a regular file and leaves its target alone', async () => {
+      await symlink(outside, join(target, 'entrypoint.sh'));
+      expect(await runCli(['docker-assets', target], io, { assetsDir: assets })).toBe(0);
+      const info = await lstat(join(target, 'entrypoint.sh'));
+      expect(info.isFile()).toBe(true);
+      expect(info.mode & 0o777).toBe(0o755);
+      expect(await readFile(join(target, 'entrypoint.sh'), 'utf8')).toBe('contents of entrypoint.sh\n');
+      expect(await readFile(outside, 'utf8')).toBe('outside');
+      expect((await stat(outside)).mode & 0o777).toBe(0o600);
+    });
+
+    it('replaces a dangling symlink without creating what it pointed at', async () => {
+      const missing = join(dir, 'missing');
+      await symlink(missing, join(target, 'litestream.yml'));
+      expect(await runCli(['docker-assets', target], io, { assetsDir: assets })).toBe(0);
+      const info = await lstat(join(target, 'litestream.yml'));
+      expect(info.isFile()).toBe(true);
+      expect(info.mode & 0o777).toBe(0o644);
+      expect(existsSync(missing)).toBe(false);
+    });
+
+    it('refuses a directory before copying anything', async () => {
+      await writeFile(join(target, 'entrypoint.sh'), 'old');
+      await mkdir(join(target, 'litestream.yml'));
+      await writeFile(join(target, 'litestream.yml', 'keep'), 'keep');
+      expect(await runCli(['docker-assets', target], io, { assetsDir: assets })).toBe(1);
+      expect(err).toEqual([`selfhost-kit: ${join(target, 'litestream.yml')} is a directory`]);
+      expect(out).toEqual([]);
+      expect(await readFile(join(target, 'litestream.yml', 'keep'), 'utf8')).toBe('keep');
+      expect(await readFile(join(target, 'entrypoint.sh'), 'utf8')).toBe('old');
+      expect(existsSync(join(target, 'fetch-litestream.sh'))).toBe(false);
+    });
   });
 
   it('returns 1 when an asset is missing from the package', async () => {

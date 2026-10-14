@@ -1,5 +1,6 @@
 // The `selfhost-kit` command (bin/selfhost-kit.mjs). Not part of the package's import API.
-import { chmod, copyFile, mkdir } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { chmod, copyFile, lstat, mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -35,11 +36,12 @@ export async function runCli(
   options: { assetsDir?: URL | string } = {},
 ): Promise<number> {
   const [command, target, ...rest] = argv;
-  if (argv.length === 1 && (command === '--help' || command === '-h')) {
+  if (argv.some((arg) => arg === '--help' || arg === '-h')) {
     io.stdout(USAGE);
     return 0;
   }
-  if (command !== 'docker-assets' || !target || rest.length > 0) {
+  // A <dir> starting with "-" is a mistyped option, not a directory to create (./-name still works).
+  if (command !== 'docker-assets' || !target || target.startsWith('-') || rest.length > 0) {
     io.stderr(USAGE);
     return 2;
   }
@@ -48,10 +50,22 @@ export async function runCli(
   const sourceDir = source instanceof URL ? fileURLToPath(source) : source;
   try {
     await mkdir(target, { recursive: true });
+    // Checked up front, so a refusal leaves every destination as it was.
+    for (const { name } of DOCKER_ASSETS) {
+      const destination = join(target, name);
+      if ((await lstat(destination).catch(() => null))?.isDirectory()) {
+        io.stderr(`selfhost-kit: ${destination} is a directory`);
+        return 1;
+      }
+    }
     for (const { name, mode } of DOCKER_ASSETS) {
-      // copyFile follows symlinks, so the copy is always a regular file with the asset's bytes.
-      await copyFile(join(sourceDir, name), join(target, name));
-      await chmod(join(target, name), mode);
+      const destination = join(target, name);
+      // Remove what's there first, so a symlink is replaced rather than written through, and copy
+      // exclusively, so nothing put back in between is followed either. copyFile follows the source's
+      // symlinks, so the copy is always a regular file with the asset's bytes.
+      await rm(destination, { force: true });
+      await copyFile(join(sourceDir, name), destination, constants.COPYFILE_EXCL);
+      await chmod(destination, mode);
       io.stdout(`copied ${name}`);
     }
   } catch (error) {
