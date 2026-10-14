@@ -9,7 +9,8 @@ Release. Nobody runs `npm publish` or pushes a `v*` tag by hand. The one excepti
 1. A pull request merges into `main`. The `main` ruleset requires the `check` and `secret-scan` jobs of
    [`ci.yml`](../.github/workflows/ci.yml) to pass first.
 2. `ci.yml` runs again on the push and uploads the `dist/` it built and tested as the `dist` artifact.
-3. When that run succeeds, [`release.yml`](../.github/workflows/release.yml) starts. It runs only for a
+3. When that whole run succeeds (including the `sample-caller` job, which builds the fixture image and
+   runs the entrypoint's container tests), [`release.yml`](../.github/workflows/release.yml) starts. It runs only for a
    successful `push` run from this repository, and only if that commit is still the head of `main`. An
    older run steps aside, and the newer commit's run releases everything since the last tag.
 4. semantic-release ([`release.config.mjs`](../release.config.mjs)) reads the Conventional Commits since

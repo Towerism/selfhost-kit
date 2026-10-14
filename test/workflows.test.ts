@@ -64,7 +64,8 @@ describe('expressions in shell', () => {
     const offenders: string[] = [];
     for (const file of (await readdir(workflows)).filter((f) => /\.ya?ml$/.test(f))) {
       for (const [jobName, job] of Object.entries((await load(file)).jobs)) {
-        for (const step of job.steps ?? []) {
+        // A job that calls a reusable workflow has no steps of its own.
+        for (const step of (job as Partial<Job>).steps ?? []) {
           if (step.run?.includes('${{')) offenders.push(`${file}:${jobName}:${step.name ?? step.run}`);
         }
       }
@@ -172,7 +173,9 @@ describe('ci.yml sample caller', () => {
 
 type CallInput = { type: string; required?: boolean; default?: unknown; description?: string };
 async function callInputs(name: string) {
-  const on = (await load(name)).on as { workflow_call: { inputs: Record<string, CallInput>; outputs?: object } };
+  const on = (await load(name)).on as {
+    workflow_call: { inputs: Record<string, CallInput>; outputs?: object };
+  };
   return on.workflow_call;
 }
 const stepNames = (job: Job) => job.steps.map((s) => s.name ?? s.uses?.split('@')[0] ?? s.run?.trim());
@@ -216,7 +219,11 @@ describe('app-image.yml', () => {
       'Publish to GHCR',
     ]);
     const build = job.steps[2]!;
-    expect(build.with).toMatchObject({ load: true, platforms: 'linux/amd64', target: '${{ inputs.target }}' });
+    expect(build.with).toMatchObject({
+      load: true,
+      platforms: 'linux/amd64',
+      target: '${{ inputs.target }}',
+    });
     expect(build.with?.push).toBeUndefined();
     expect(JSON.stringify(job.steps[0]!.with)).toContain('"persist-credentials":false');
   });
@@ -233,7 +240,11 @@ describe('app-image.yml', () => {
     for (const step of job.steps.slice(5)) expect(step.if).toBe("steps.publish.outputs.enabled == 'true'");
     const push = job.steps.at(-1)!;
     expect(push.id).toBe('push');
-    expect(push.with).toMatchObject({ push: true, platforms: 'linux/amd64', tags: '${{ steps.meta.outputs.tags }}' });
+    expect(push.with).toMatchObject({
+      push: true,
+      platforms: 'linux/amd64',
+      tags: '${{ steps.meta.outputs.tags }}',
+    });
     const meta = job.steps.find((s) => s.name === 'Image tags')!;
     expect(meta.with?.tags).toBe(
       "type=edge,branch=main\ntype=ref,event=pr\ntype=sha,enable=${{ github.event_name == 'push' }}\n",
@@ -243,14 +254,20 @@ describe('app-image.yml', () => {
   it('logs in to GHCR with the job token only', async () => {
     const job = (await load('app-image.yml')).jobs.image!;
     const login = job.steps.find((s) => s.uses?.startsWith('docker/login-action@'))!;
-    expect(login.with).toEqual({ registry: 'ghcr.io', username: '${{ github.actor }}', password: '${{ github.token }}' });
+    expect(login.with).toEqual({
+      registry: 'ghcr.io',
+      username: '${{ github.actor }}',
+      password: '${{ github.token }}',
+    });
   });
 });
 
 describe('app-release.yml', () => {
   it('is called with the image name and the digest the image job published', async () => {
     const call = await callInputs('app-release.yml');
-    expect(Object.fromEntries(Object.entries(call.inputs).map(([k, v]) => [k, [v.type, v.required]]))).toEqual({
+    expect(
+      Object.fromEntries(Object.entries(call.inputs).map(([k, v]) => [k, [v.type, v.required]])),
+    ).toEqual({
       'image-name': ['string', true],
       digest: ['string', true],
     });
