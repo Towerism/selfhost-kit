@@ -1,0 +1,5 @@
+# hadolint (CI lint, ADR-0004): warnings fail the build. DL3008 (pin apt package versions) is ignored:
+# Debian drops old package versions from its mirrors, so a pinned gosu or tini would break every rebuild.
+failure-threshold: warning
+ignored:
+  - DL3008

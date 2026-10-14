@@ -62,7 +62,7 @@
     "check:package": "publint --strict && attw --pack . --profile esm-only",
     "test:package": "vitest run --project package",
     "bench": "vitest bench --run --project 'unit (bench)'",
-    "test:entrypoint": "sh test/entrypoint/build.sh && bash test/entrypoint/run.sh selfhost-kit-entrypoint:test"
+    "test:entrypoint": "docker build -f test/entrypoint/Dockerfile --target fixture -t selfhost-kit-entrypoint:test . && test/entrypoint/run.sh selfhost-kit-entrypoint:test"
   },
   "peerDependencies": {
     "@semantic-release/exec": "^7",

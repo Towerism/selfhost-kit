@@ -1,0 +1,7 @@
+# The fixture image builds from the repository root (test/entrypoint/Dockerfile).
+**/node_modules
+dist
+coverage
+.git
+.claude
+*.tgz
