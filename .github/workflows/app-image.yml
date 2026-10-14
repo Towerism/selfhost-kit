@@ -1,7 +1,7 @@
 name: App image
 
-# Reusable (ADR-0004): builds an app's image, runs the app's smoke scripts against it, and only then
-# publishes it to GHCR. An app calls it from its CI, pinned by full commit SHA (never a tag):
+# Reusable (ADR-0004): builds an app's image once, runs the app's smoke scripts against it, and only then
+# publishes that same image to GHCR. An app calls it from its CI, pinned by full commit SHA (never a tag):
 #
 #   image:
 #     needs: check
@@ -50,6 +50,11 @@ on:
 permissions:
   contents: read
 
+# bash -eo pipefail: without `shell:`, a failing command on the left of a pipe would pass.
+defaults:
+  run:
+    shell: bash
+
 jobs:
   image:
     runs-on: ubuntu-24.04
@@ -65,7 +70,20 @@ jobs:
           persist-credentials: false
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
-      - name: Build for the smoke tests
+      # Before the build, so the tested image already carries the labels it is published with.
+      - name: Image tags
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ inputs.image-name }}
+          tags: |
+            type=edge,branch=main
+            type=ref,event=pr
+            type=sha,enable=${{ github.event_name == 'push' }}
+
+      # The only build: the smoke tests run on this image, and the publish step pushes this image.
+      - name: Build
+        id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: ${{ inputs.context }}
@@ -74,22 +92,29 @@ jobs:
           platforms: linux/amd64
           load: true
           tags: app-image:smoke-test
+          labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # Each script gets /dev/null as stdin: one that reads stdin must not swallow the rest of the list.
       - name: Smoke tests
         env:
           SMOKE_SCRIPTS: ${{ inputs.smoke-scripts }}
           IMAGE: app-image:smoke-test
         run: |
+          ran=0
           while IFS= read -r script; do
             script="$(printf '%s' "$script" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
             [ -z "$script" ] && continue
             case "$script" in */*) ;; *) script="./$script" ;; esac
             echo "::group::$script $IMAGE"
-            "$script" "$IMAGE"
+            "$script" "$IMAGE" </dev/null
             echo "::endgroup::"
+            ran=$((ran + 1))
           done <<< "$SMOKE_SCRIPTS"
+          if [ "$ran" -eq 0 ]; then
+            echo "::warning title=No smoke tests::No smoke-scripts were given, so the image was not smoke-tested."
+          fi
 
       # Fork PRs get a read-only token: they stop after the smoke tests.
       - name: Decide whether to publish
@@ -106,17 +131,6 @@ jobs:
           fi
           echo "enabled=$enabled" >> "$GITHUB_OUTPUT"
 
-      - name: Image tags
-        id: meta
-        if: steps.publish.outputs.enabled == 'true'
-        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
-        with:
-          images: ${{ inputs.image-name }}
-          tags: |
-            type=edge,branch=main
-            type=ref,event=pr
-            type=sha,enable=${{ github.event_name == 'push' }}
-
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         if: steps.publish.outputs.enabled == 'true'
         with:
@@ -124,16 +138,39 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ github.token }}
 
+      # No rebuild: the tested image (by its ID, not the tag a smoke script could move) is pushed under
+      # one per-commit or per-PR tag, and the other tags name the digest that push reported.
       - name: Publish to GHCR
         id: push
         if: steps.publish.outputs.enabled == 'true'
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: ${{ inputs.context }}
-          file: ${{ inputs.file }}
-          target: ${{ inputs.target }}
-          platforms: linux/amd64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
+        env:
+          IMAGE_ID: ${{ steps.build.outputs.imageid }}
+          IMAGE_NAME: ${{ inputs.image-name }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          tags=()
+          while IFS= read -r tag; do
+            if [ -n "$tag" ]; then tags+=("$tag"); fi
+          done <<< "$TAGS"
+          if [ "${#tags[@]}" -eq 0 ]; then
+            echo "::error::The metadata step produced no image tags; nothing was published."
+            exit 1
+          fi
+          primary="${tags[0]}"
+          for tag in "${tags[@]}"; do
+            case "$tag" in *:sha-*) primary="$tag" ;; esac
+          done
+          docker tag "$IMAGE_ID" "$primary"
+          pushed="$(docker push "$primary")"
+          printf '%s\n' "$pushed"
+          digest="$(printf '%s\n' "$pushed" | sed -n 's/.*digest: \(sha256:[0-9a-f]\{64\}\).*/\1/p' | tail -n 1)"
+          if [ -z "$digest" ]; then
+            echo "::error::docker push $primary reported no digest; nothing else was tagged."
+            exit 1
+          fi
+          for tag in "${tags[@]}"; do
+            if [ "$tag" != "$primary" ]; then
+              docker buildx imagetools create --tag "$tag" "$IMAGE_NAME@$digest"
+            fi
+          done
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"

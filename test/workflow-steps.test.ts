@@ -1,0 +1,99 @@
+import { describe, expect, it } from 'vitest';
+import { runStep } from './helpers/workflow-step.js';
+
+// The shell inside the reusable workflows, run as the runner runs it (bash -eo pipefail) against stub
+// docker/gh. The YAML around it is covered by workflows.test.ts.
+const IMAGE = 'app-image:smoke-test';
+const calls = (run: Awaited<ReturnType<typeof runStep>>) => run.calls.map((c) => [c.tool, ...c.argv]);
+
+describe('app-image.yml smoke tests', () => {
+  const smoke = (scripts: string, files: Record<string, { content: string }> = {}) =>
+    runStep('app-image.yml', 'Smoke tests', {
+      env: { SMOKE_SCRIPTS: scripts, IMAGE },
+      stubs: { ran: [] },
+      files,
+    });
+  const script = (body: string) => ({ content: `#!/bin/sh\n${body}\n` });
+
+  it('runs every script, even after one that reads stdin', async () => {
+    const run = await smoke('  reads.sh  \n./after.sh\n', {
+      'reads.sh': script('cat >/dev/null\nran reads "$@"'),
+      'after.sh': script('ran after "$@"'),
+    });
+    expect(run.code).toBe(0);
+    expect(calls(run)).toEqual([
+      ['ran', 'reads', IMAGE],
+      ['ran', 'after', IMAGE],
+    ]);
+    expect(run.stdout).not.toContain('::warning');
+  });
+
+  it('stops at the first failing script and fails the step', async () => {
+    const run = await smoke('fail.sh\nafter.sh\n', {
+      'fail.sh': script('ran fail\nexit 3'),
+      'after.sh': script('ran after'),
+    });
+    expect(run.code).toBe(3);
+    expect(calls(run)).toEqual([['ran', 'fail']]);
+  });
+
+  it.each(['', '\n', '  \n\t\n'])('warns, and succeeds, when no script is given: %j', async (scripts) => {
+    const run = await smoke(scripts);
+    expect(run.code).toBe(0);
+    const warnings = run.stdout.split('\n').filter((line) => line.startsWith('::warning'));
+    expect(warnings).toEqual([
+      '::warning title=No smoke tests::No smoke-scripts were given, so the image was not smoke-tested.',
+    ]);
+  });
+});
+
+describe('app-image.yml publish', () => {
+  const DIGEST = `sha256:${'d'.repeat(64)}`;
+  const ID = `sha256:${'1'.repeat(64)}`;
+  const publish = (tags: string, push: { stdout?: string; status?: number }) =>
+    runStep('app-image.yml', 'Publish to GHCR', {
+      env: { IMAGE_ID: ID, IMAGE_NAME: 'ghcr.io/x/app', TAGS: tags },
+      stubs: { docker: [{ argv: ['push'], ...push }] },
+    });
+
+  it('pushes the tested image once, under its sha tag, and adds the others by digest', async () => {
+    const run = await publish('ghcr.io/x/app:edge\nghcr.io/x/app:sha-abc1234\n', {
+      stdout: `The push refers to repository [ghcr.io/x/app]\nsha-abc1234: digest: ${DIGEST} size: 1234\n`,
+    });
+    expect(run.code).toBe(0);
+    expect(calls(run)).toEqual([
+      ['docker', 'tag', ID, 'ghcr.io/x/app:sha-abc1234'],
+      ['docker', 'push', 'ghcr.io/x/app:sha-abc1234'],
+      ['docker', 'buildx', 'imagetools', 'create', '--tag', 'ghcr.io/x/app:edge', `ghcr.io/x/app@${DIGEST}`],
+    ]);
+    expect(run.outputs).toEqual({ digest: DIGEST });
+  });
+
+  it('pushes a pull request image under its one tag', async () => {
+    const run = await publish('ghcr.io/x/app:pr-7', { stdout: `pr-7: digest: ${DIGEST} size: 99\n` });
+    expect(run.code).toBe(0);
+    expect(calls(run)).toEqual([
+      ['docker', 'tag', ID, 'ghcr.io/x/app:pr-7'],
+      ['docker', 'push', 'ghcr.io/x/app:pr-7'],
+    ]);
+    expect(run.outputs).toEqual({ digest: DIGEST });
+  });
+
+  it.each([
+    ['a push that reports no digest', 'ghcr.io/x/app:pr-7', { stdout: 'pr-7: pushed\n' }, 2],
+    [
+      'a push that reports a short digest',
+      'ghcr.io/x/app:pr-7',
+      { stdout: 'digest: sha256:abc size: 1\n' },
+      2,
+    ],
+    ['a failing push', 'ghcr.io/x/app:pr-7', { stdout: `digest: ${DIGEST} size: 1\n`, status: 1 }, 2],
+    ['no tags at all', '\n', { stdout: `digest: ${DIGEST} size: 1\n` }, 0],
+  ])('fails, publishing no digest, on %s', async (_, tags, push, dockerCalls) => {
+    const run = await publish(tags, push);
+    expect(run.code).not.toBe(0);
+    expect(run.outputs).toEqual({});
+    expect(run.calls).toHaveLength(dockerCalls);
+    if (!('status' in push)) expect(run.stdout).toMatch(/^::error::/m);
+  });
+});

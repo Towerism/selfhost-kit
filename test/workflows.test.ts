@@ -32,6 +32,7 @@ interface Job {
 interface Workflow {
   on: Record<string, Record<string, unknown>>;
   permissions?: Record<string, string>;
+  defaults?: { run?: { shell?: string } };
   jobs: Record<string, Job>;
 }
 
@@ -197,6 +198,10 @@ describe('app-image.yml', () => {
     expect(Object.keys(call.outputs ?? {})).toEqual(['digest']);
   });
 
+  it('runs its shell steps with bash -eo pipefail', async () => {
+    expect((await load('app-image.yml')).defaults).toEqual({ run: { shell: 'bash' } });
+  });
+
   it('reads only its repository, writes only packages, and has a timeout', async () => {
     const workflow = await load('app-image.yml');
     expect(workflow.permissions).toEqual({ contents: 'read' });
@@ -206,29 +211,41 @@ describe('app-image.yml', () => {
     expect(job.outputs).toEqual({ digest: '${{ steps.push.outputs.digest }}' });
   });
 
-  it('builds, smoke-tests, and only then decides whether to publish', async () => {
+  it('builds once, labelled, smoke-tests, and only then decides whether to publish', async () => {
     const job = (await load('app-image.yml')).jobs.image!;
     expect(stepNames(job)).toEqual([
       'actions/checkout',
       'docker/setup-buildx-action',
-      'Build for the smoke tests',
+      'Image tags',
+      'Build',
       'Smoke tests',
       'Decide whether to publish',
-      'Image tags',
       'docker/login-action',
       'Publish to GHCR',
     ]);
-    const build = job.steps[2]!;
-    expect(build.with).toMatchObject({
-      load: true,
-      platforms: 'linux/amd64',
+    const meta = job.steps[2]!;
+    expect(meta.if).toBeUndefined();
+    expect(meta.with?.tags).toBe(
+      "type=edge,branch=main\ntype=ref,event=pr\ntype=sha,enable=${{ github.event_name == 'push' }}\n",
+    );
+    const builds = job.steps.filter((s) => s.uses?.startsWith('docker/build-push-action@'));
+    expect(builds).toEqual([job.steps[3]]);
+    expect(builds[0]!.id).toBe('build');
+    expect(builds[0]!.with).toEqual({
+      context: '${{ inputs.context }}',
+      file: '${{ inputs.file }}',
       target: '${{ inputs.target }}',
+      platforms: 'linux/amd64',
+      load: true,
+      tags: 'app-image:smoke-test',
+      labels: '${{ steps.meta.outputs.labels }}',
+      'cache-from': 'type=gha',
+      'cache-to': 'type=gha,mode=max',
     });
-    expect(build.with?.push).toBeUndefined();
     expect(JSON.stringify(job.steps[0]!.with)).toContain('"persist-credentials":false');
   });
 
-  it('publishes only when asked to, and only for pushes and same-repository pull requests', async () => {
+  it('publishes only when asked to, only for pushes and same-repository pull requests, and never rebuilds', async () => {
     const job = (await load('app-image.yml')).jobs.image!;
     const decide = job.steps.find((s) => s.name === 'Decide whether to publish')!;
     expect(decide.env).toEqual({
@@ -237,18 +254,19 @@ describe('app-image.yml', () => {
       HEAD_REPO: '${{ github.event.pull_request.head.repo.full_name }}',
       REPO: '${{ github.repository }}',
     });
-    for (const step of job.steps.slice(5)) expect(step.if).toBe("steps.publish.outputs.enabled == 'true'");
+    const afterDecide = job.steps.slice(job.steps.indexOf(decide) + 1);
+    expect(afterDecide).toHaveLength(2);
+    for (const step of afterDecide) {
+      expect(step.if).toBe("steps.publish.outputs.enabled == 'true'");
+      expect(step.uses ?? '').not.toMatch(/^docker\/build-push-action@/);
+    }
     const push = job.steps.at(-1)!;
     expect(push.id).toBe('push');
-    expect(push.with).toMatchObject({
-      push: true,
-      platforms: 'linux/amd64',
-      tags: '${{ steps.meta.outputs.tags }}',
+    expect(push.env).toEqual({
+      IMAGE_ID: '${{ steps.build.outputs.imageid }}',
+      IMAGE_NAME: '${{ inputs.image-name }}',
+      TAGS: '${{ steps.meta.outputs.tags }}',
     });
-    const meta = job.steps.find((s) => s.name === 'Image tags')!;
-    expect(meta.with?.tags).toBe(
-      "type=edge,branch=main\ntype=ref,event=pr\ntype=sha,enable=${{ github.event_name == 'push' }}\n",
-    );
   });
 
   it('logs in to GHCR with the job token only', async () => {
