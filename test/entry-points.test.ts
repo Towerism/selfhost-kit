@@ -41,19 +41,30 @@ describe('entry points', () => {
     );
   });
 
-  it('/testing exports exactly its K1 helpers', () => {
+  it('/testing exports exactly its K1 and K2 helpers', () => {
     expect(Object.keys(testing).sort()).toEqual([
       'VAULT_V1_VECTORS',
+      'describeBodySize',
+      'describeJsonOnly',
       'describeRedactionContract',
+      'describeSecurityHeaders',
       'describeVaultContract',
       'existingInstallSecrets',
       'fakeClock',
+      'h3TestApp',
       'tempSecretsDir',
     ]);
   });
 
-  it('/nitro is still empty until K2', () => {
-    expect(Object.keys(nitro)).toEqual([]);
+  it('/nitro exports exactly the six K2 adapters', () => {
+    expect(Object.keys(nitro).sort()).toEqual([
+      'bodySizeLimit',
+      'enforceRateLimit',
+      'jsonErrorHandler',
+      'jsonOnly',
+      'requestLogPlugin',
+      'securityHeadersPlugin',
+    ]);
   });
 
   it('every error class names itself', () => {

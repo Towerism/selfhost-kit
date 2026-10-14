@@ -10,7 +10,7 @@ let tester: Consumer;
 beforeAll(async () => {
   kit = await packKit();
   consumer = await makeConsumer(kit, 'consumer');
-  tester = await makeConsumer(kit, 'tester', ['vitest', '@types/node']);
+  tester = await makeConsumer(kit, 'tester', ['vitest', 'h3', '@types/node']);
 });
 
 afterAll(async () => {
@@ -18,13 +18,12 @@ afterAll(async () => {
 });
 
 describe('exports, as a consumer sees them', () => {
-  it.each(['@towerism/selfhost-kit', '@towerism/selfhost-kit/nitro'])(
-    'imports %s under Node',
-    async (specifier) => {
-      const out = await consumer.node(`const m = await import('${specifier}'); console.log(typeof m);`);
-      expect(out.trim()).toBe('object');
-    },
-  );
+  it('imports the root entry point under Node', async () => {
+    const out = await consumer.node(
+      `const m = await import('@towerism/selfhost-kit'); console.log(typeof m);`,
+    );
+    expect(out.trim()).toBe('object');
+  });
 
   it('uses the core with only its declared dependencies, and no h3 or vitest', async () => {
     const out = await consumer.node(`
@@ -52,7 +51,7 @@ describe('exports, as a consumer sees them', () => {
     });
   });
 
-  it('refuses /testing without its vitest peer', async () => {
+  it('refuses /testing without its vitest and h3 peers', async () => {
     await expect(consumer.node(`await import('@towerism/selfhost-kit/testing');`)).rejects.toThrow(/vitest/);
   });
 
@@ -61,19 +60,22 @@ describe('exports, as a consumer sees them', () => {
       `const t = await import('@towerism/selfhost-kit/testing'); console.log(Object.keys(t).sort().join(','));`,
     );
     expect(out.trim()).toBe(
-      'VAULT_V1_VECTORS,describeRedactionContract,describeVaultContract,existingInstallSecrets,fakeClock,tempSecretsDir',
+      'VAULT_V1_VECTORS,describeBodySize,describeJsonOnly,describeRedactionContract,describeSecurityHeaders,' +
+        'describeVaultContract,existingInstallSecrets,fakeClock,h3TestApp,tempSecretsDir',
     );
   });
 
-  it('imports the nitro entry without h3 installed', async () => {
-    const out = await consumer.node(`
-      import { createRequire } from 'node:module';
-      let h3 = 'installed';
-      try { createRequire(import.meta.url).resolve('h3'); } catch { h3 = 'absent'; }
-      await import('@towerism/selfhost-kit/nitro');
-      console.log(h3);
-    `);
-    expect(out.trim()).toBe('absent');
+  it('refuses /nitro without its h3 peer', async () => {
+    await expect(consumer.node(`await import('@towerism/selfhost-kit/nitro');`)).rejects.toThrow(/'h3'/);
+  });
+
+  it('imports /nitro once h3 is installed', async () => {
+    const out = await tester.node(
+      `const n = await import('@towerism/selfhost-kit/nitro'); console.log(Object.keys(n).sort().join(','));`,
+    );
+    expect(out.trim()).toBe(
+      'bodySizeLimit,enforceRateLimit,jsonErrorHandler,jsonOnly,requestLogPlugin,securityHeadersPlugin',
+    );
   });
 
   it('exposes package.json as JSON', async () => {
