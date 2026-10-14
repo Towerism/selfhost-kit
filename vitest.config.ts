@@ -8,7 +8,7 @@ export default defineConfig({
     env: { TZ: 'UTC' },
     coverage: {
       provider: 'v8',
-      include: ['src/core/**', 'src/nitro/**', 'scripts/**'],
+      include: ['src/core/**', 'src/nitro/**', 'src/cli/**', 'scripts/**', 'release-config/**'],
       exclude: ['src/testing/**', '**/*.test.ts'],
       thresholds: {
         ...all(90),
@@ -19,6 +19,10 @@ export default defineConfig({
         'src/core/security/client-address*': all(95),
         // A wrong answer from the release's npm check pushes a tag with nothing published.
         'scripts/**': all(100),
+        // A bin that copies a symlink, or the wrong mode, breaks every app image.
+        'src/cli/**': all(95),
+        // A wrong rule mis-tags the releases of both apps.
+        'release-config/**': all(100),
       },
     },
     projects: [

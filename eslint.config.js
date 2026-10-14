@@ -54,6 +54,12 @@ export default tseslint.config(
     },
   },
   {
+    files: ['src/cli/**'],
+    rules: {
+      'no-restricted-imports': ['error', { patterns: [{ regex: TESTING, message: TESTING_MESSAGE }] }],
+    },
+  },
+  {
     files: ['src/nitro/**'],
     rules: {
       'no-restricted-imports': [

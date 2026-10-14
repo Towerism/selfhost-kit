@@ -6,11 +6,16 @@ import { makeConsumer, packKit, type Consumer, type PackedKit } from './kit-tarb
 let kit: PackedKit;
 let consumer: Consumer;
 let tester: Consumer;
+let releaser: Consumer;
 
 beforeAll(async () => {
   kit = await packKit();
   consumer = await makeConsumer(kit, 'consumer');
   tester = await makeConsumer(kit, 'tester', ['vitest', 'h3', '@types/node']);
+  releaser = await makeConsumer(kit, 'releaser', [
+    'conventional-changelog-conventionalcommits',
+    '@types/node',
+  ]);
 });
 
 afterAll(async () => {
@@ -90,6 +95,65 @@ describe('exports, as a consumer sees them', () => {
     await expect(consumer.node(`await import('@towerism/selfhost-kit/dist/core/index.js');`)).rejects.toThrow(
       /ERR_PACKAGE_PATH_NOT_EXPORTED/,
     );
+  });
+
+  it('copies the Docker assets out of the package with its bin, as real files', async () => {
+    const out = await consumer.node(`
+      import { execFileSync } from 'node:child_process';
+      import { lstatSync, readdirSync } from 'node:fs';
+      const bin = 'node_modules/@towerism/selfhost-kit/bin/selfhost-kit.mjs';
+      const printed = execFileSync(process.execPath, [bin, 'docker-assets', '.output/selfhost-kit'], { encoding: 'utf8' });
+      const files = readdirSync('.output/selfhost-kit').sort().map((name) => {
+        const info = lstatSync('.output/selfhost-kit/' + name);
+        return [name, info.isFile(), (info.mode & 0o777).toString(8)];
+      });
+      console.log(JSON.stringify({ printed, files }));
+    `);
+    expect(JSON.parse(out)).toEqual({
+      printed: 'copied entrypoint.sh\ncopied fetch-litestream.sh\ncopied litestream.yml\n',
+      files: [
+        ['entrypoint.sh', true, '755'],
+        ['fetch-litestream.sh', true, '755'],
+        ['litestream.yml', true, '644'],
+      ],
+    });
+  });
+
+  it('resolves the raw Docker assets through ./docker/*', async () => {
+    const out = await consumer.node(
+      `console.log(import.meta.resolve('@towerism/selfhost-kit/docker/entrypoint.sh'));`,
+    );
+    expect(out.trim()).toMatch(/\/node_modules\/@towerism\/selfhost-kit\/docker\/entrypoint\.sh$/);
+  });
+
+  it('refuses ./release-config without its conventional-changelog peer', async () => {
+    await expect(consumer.node(`await import('@towerism/selfhost-kit/release-config');`)).rejects.toThrow(
+      /conventional-changelog-conventionalcommits/,
+    );
+  });
+
+  it('imports ./release-config once its peers are installed', async () => {
+    const out = await releaser.node(`
+      const { default: config } = await import('@towerism/selfhost-kit/release-config');
+      console.log(JSON.stringify(config.plugins.map((p) => (Array.isArray(p) ? p[0] : p))));
+    `);
+    expect(JSON.parse(out)).toEqual([
+      '@semantic-release/commit-analyzer',
+      '@semantic-release/release-notes-generator',
+      '@semantic-release/exec',
+      '@semantic-release/github',
+    ]);
+  });
+
+  it.each(['NodeNext', 'Bundler'] as const)('type-checks ./release-config under %s', async (resolution) => {
+    await writeFile(
+      join(releaser.dir, 'consumer.ts'),
+      [
+        "import config from '@towerism/selfhost-kit/release-config';",
+        'export const branches: string[] = config.branches;',
+      ].join('\n'),
+    );
+    await expect(releaser.tsc(resolution)).resolves.toBeUndefined();
   });
 
   it.each(['NodeNext', 'Bundler'] as const)(

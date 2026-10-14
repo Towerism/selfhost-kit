@@ -15,12 +15,22 @@ describe('vitest config', () => {
       'src/core/security/client-address*': all(95),
       // A wrong answer from the release's npm check pushes a tag with nothing published.
       'scripts/**': all(100),
+      // A bin that copies a symlink, or the wrong mode, breaks every app image.
+      'src/cli/**': all(95),
+      // A wrong rule mis-tags the releases of both apps.
+      'release-config/**': all(100),
     });
   });
 
-  it('measures core, nitro and the release scripts, never the testing helpers', () => {
+  it('measures core, nitro, the CLI, the release scripts and the release config, never the testing helpers', () => {
     const coverage = config.test?.coverage as { include?: string[]; exclude?: string[] };
-    expect(coverage.include).toEqual(['src/core/**', 'src/nitro/**', 'scripts/**']);
+    expect(coverage.include).toEqual([
+      'src/core/**',
+      'src/nitro/**',
+      'src/cli/**',
+      'scripts/**',
+      'release-config/**',
+    ]);
     expect(coverage.exclude).toEqual(expect.arrayContaining(['src/testing/**', '**/*.test.ts']));
   });
 
