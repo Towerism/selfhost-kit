@@ -13,11 +13,20 @@ interface Step {
   uses?: string;
   run?: string;
   name?: string;
+  id?: string;
+  if?: string;
+  env?: Record<string, string>;
+  with?: Record<string, unknown>;
 }
 interface Job {
   if?: string;
   environment?: string;
   permissions?: Record<string, string>;
+  outputs?: Record<string, string>;
+  'timeout-minutes'?: number;
+  uses?: string;
+  with?: Record<string, unknown>;
+  needs?: string | string[];
   steps: Step[];
 }
 interface Workflow {
@@ -49,6 +58,21 @@ describe('workflow policy', () => {
   });
 });
 
+describe('expressions in shell', () => {
+  // An input or event field expanded into `run:` is shell injection; it must arrive through `env:`.
+  it('never appear inside a run block, in any workflow', async () => {
+    const offenders: string[] = [];
+    for (const file of (await readdir(workflows)).filter((f) => /\.ya?ml$/.test(f))) {
+      for (const [jobName, job] of Object.entries((await load(file)).jobs)) {
+        for (const step of job.steps ?? []) {
+          if (step.run?.includes('${{')) offenders.push(`${file}:${jobName}:${step.name ?? step.run}`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+});
+
 describe('tool pins', () => {
   // Renovate's own regex manager, so a pin it can't see fails here instead of going stale.
   async function matchStrings(): Promise<string[]> {
@@ -63,6 +87,8 @@ describe('tool pins', () => {
     expect(violations).toEqual([]);
     expect(pins.map((p) => [p.file, p.datasource, p.depName])).toEqual([
       ['ci.yml', 'github-release-attachments', 'rhysd/actionlint'],
+      ['ci.yml', 'github-release-attachments', 'koalaman/shellcheck'],
+      ['ci.yml', 'github-release-attachments', 'hadolint/hadolint'],
       ['ci.yml', 'github-release-attachments', 'gitleaks/gitleaks'],
     ]);
     for (const pin of pins) {
@@ -106,6 +132,8 @@ describe('ci.yml', () => {
       'pnpm install --frozen-lockfile',
       'pnpm lint',
       'actionlint',
+      'shellcheck',
+      'hadolint',
       'pnpm typecheck',
       'pnpm test',
       'pnpm build',
@@ -119,6 +147,158 @@ describe('ci.yml', () => {
     const scan = (await load('ci.yml')).jobs['secret-scan']!;
     expect(JSON.stringify(scan.steps)).toContain('"fetch-depth":0');
     expect(scan.steps.at(-1)!.run).toMatch(/gitleaks" git --redact .*--exit-code 1/);
+  });
+});
+
+describe('ci.yml sample caller', () => {
+  it('runs the reusable image workflow from this commit on the fixture image, publishing nothing', async () => {
+    const job = (await load('ci.yml')).jobs['sample-caller']!;
+    expect(job.uses).toBe('./.github/workflows/app-image.yml');
+    expect(job.with).toEqual({
+      'image-name': 'ghcr.io/towerism/selfhost-kit-fixture',
+      file: 'test/entrypoint/Dockerfile',
+      target: 'fixture',
+      publish: false,
+      'smoke-scripts': 'test/entrypoint/run.sh\n',
+    });
+  });
+
+  it('grants exactly what the image job asks for, and runs alongside check', async () => {
+    const job = (await load('ci.yml')).jobs['sample-caller']!;
+    expect(job.permissions).toEqual({ contents: 'read', packages: 'write' });
+    expect(job.needs).toBeUndefined();
+  });
+});
+
+type CallInput = { type: string; required?: boolean; default?: unknown; description?: string };
+async function callInputs(name: string) {
+  const on = (await load(name)).on as { workflow_call: { inputs: Record<string, CallInput>; outputs?: object } };
+  return on.workflow_call;
+}
+const stepNames = (job: Job) => job.steps.map((s) => s.name ?? s.uses?.split('@')[0] ?? s.run?.trim());
+
+describe('app-image.yml', () => {
+  it('is called with an image name, optional target, file, context, smoke scripts and publish switch', async () => {
+    const call = await callInputs('app-image.yml');
+    const inputs = Object.fromEntries(
+      Object.entries(call.inputs).map(([k, v]) => [k, [v.type, v.required ?? false, v.default]]),
+    );
+    expect(inputs).toEqual({
+      'image-name': ['string', true, undefined],
+      target: ['string', false, 'app'],
+      file: ['string', false, 'Dockerfile'],
+      context: ['string', false, '.'],
+      'smoke-scripts': ['string', false, ''],
+      publish: ['boolean', false, true],
+    });
+    expect(Object.keys(call.outputs ?? {})).toEqual(['digest']);
+  });
+
+  it('reads only its repository, writes only packages, and has a timeout', async () => {
+    const workflow = await load('app-image.yml');
+    expect(workflow.permissions).toEqual({ contents: 'read' });
+    const job = workflow.jobs.image!;
+    expect(job.permissions).toEqual({ contents: 'read', packages: 'write' });
+    expect(job['timeout-minutes']).toBe(30);
+    expect(job.outputs).toEqual({ digest: '${{ steps.push.outputs.digest }}' });
+  });
+
+  it('builds, smoke-tests, and only then decides whether to publish', async () => {
+    const job = (await load('app-image.yml')).jobs.image!;
+    expect(stepNames(job)).toEqual([
+      'actions/checkout',
+      'docker/setup-buildx-action',
+      'Build for the smoke tests',
+      'Smoke tests',
+      'Decide whether to publish',
+      'Image tags',
+      'docker/login-action',
+      'Publish to GHCR',
+    ]);
+    const build = job.steps[2]!;
+    expect(build.with).toMatchObject({ load: true, platforms: 'linux/amd64', target: '${{ inputs.target }}' });
+    expect(build.with?.push).toBeUndefined();
+    expect(JSON.stringify(job.steps[0]!.with)).toContain('"persist-credentials":false');
+  });
+
+  it('publishes only when asked to, and only for pushes and same-repository pull requests', async () => {
+    const job = (await load('app-image.yml')).jobs.image!;
+    const decide = job.steps.find((s) => s.name === 'Decide whether to publish')!;
+    expect(decide.env).toEqual({
+      PUBLISH: '${{ inputs.publish }}',
+      EVENT: '${{ github.event_name }}',
+      HEAD_REPO: '${{ github.event.pull_request.head.repo.full_name }}',
+      REPO: '${{ github.repository }}',
+    });
+    for (const step of job.steps.slice(5)) expect(step.if).toBe("steps.publish.outputs.enabled == 'true'");
+    const push = job.steps.at(-1)!;
+    expect(push.id).toBe('push');
+    expect(push.with).toMatchObject({ push: true, platforms: 'linux/amd64', tags: '${{ steps.meta.outputs.tags }}' });
+    const meta = job.steps.find((s) => s.name === 'Image tags')!;
+    expect(meta.with?.tags).toBe(
+      "type=edge,branch=main\ntype=ref,event=pr\ntype=sha,enable=${{ github.event_name == 'push' }}\n",
+    );
+  });
+
+  it('logs in to GHCR with the job token only', async () => {
+    const job = (await load('app-image.yml')).jobs.image!;
+    const login = job.steps.find((s) => s.uses?.startsWith('docker/login-action@'))!;
+    expect(login.with).toEqual({ registry: 'ghcr.io', username: '${{ github.actor }}', password: '${{ github.token }}' });
+  });
+});
+
+describe('app-release.yml', () => {
+  it('is called with the image name and the digest the image job published', async () => {
+    const call = await callInputs('app-release.yml');
+    expect(Object.fromEntries(Object.entries(call.inputs).map(([k, v]) => [k, [v.type, v.required]]))).toEqual({
+      'image-name': ['string', true],
+      digest: ['string', true],
+    });
+  });
+
+  it('writes tags, releases and packages, and nothing else', async () => {
+    const workflow = await load('app-release.yml');
+    expect(workflow.permissions).toEqual({ contents: 'read' });
+    const job = workflow.jobs.release!;
+    expect(job.permissions).toEqual({ contents: 'write', packages: 'write' });
+    expect(job['timeout-minutes']).toBe(15);
+  });
+
+  it('tags the tested image before it pushes the git tag and the GitHub Release', async () => {
+    const job = (await load('app-release.yml')).jobs.release!;
+    expect(stepNames(job)).toEqual([
+      'actions/checkout',
+      'pnpm/action-setup',
+      'actions/setup-node',
+      'pnpm install --frozen-lockfile',
+      'Next version (dry run)',
+      'Decide whether to release',
+      'docker/login-action',
+      'Tag the image X.Y.Z, X.Y, latest',
+      'Git tag and GitHub Release',
+    ]);
+    expect(job.steps[4]!.run).toBe('pnpm exec semantic-release --dry-run');
+    expect(job.steps.at(-1)!.run).toBe('pnpm exec semantic-release');
+    for (const step of job.steps.slice(6)) expect(step.if).toBe("steps.next.outputs.version != ''");
+  });
+
+  it('refuses to release when the image job published no digest', async () => {
+    const job = (await load('app-release.yml')).jobs.release!;
+    const tag = job.steps.find((s) => s.name === 'Tag the image X.Y.Z, X.Y, latest')!;
+    expect(tag.env).toEqual({
+      IMAGE_NAME: '${{ inputs.image-name }}',
+      VERSION: '${{ steps.next.outputs.version }}',
+      DIGEST: '${{ inputs.digest }}',
+    });
+    const refusal = tag.run!.indexOf('if [ -z "$DIGEST" ]');
+    expect(refusal).toBeGreaterThanOrEqual(0);
+    expect(refusal).toBeLessThan(tag.run!.indexOf('imagetools create'));
+    expect(tag.run).toContain('exit 1');
+  });
+
+  it('checks out the full history without keeping the token in git config', async () => {
+    const job = (await load('app-release.yml')).jobs.release!;
+    expect(job.steps[0]!.with).toEqual({ 'fetch-depth': 0, 'persist-credentials': false });
   });
 });
 

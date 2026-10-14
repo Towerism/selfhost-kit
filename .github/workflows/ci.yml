@@ -41,6 +41,29 @@ jobs:
           echo "$ACTIONLINT_SHA256  $RUNNER_TEMP/$archive" | sha256sum --check --strict -
           tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" actionlint
           "$RUNNER_TEMP/actionlint" -color
+      - name: shellcheck
+        env:
+          # renovate: datasource=github-release-attachments depName=koalaman/shellcheck
+          SHELLCHECK_VERSION: v0.11.0
+          SHELLCHECK_SHA256: 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
+        run: |
+          archive="shellcheck-${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          curl -fsSL -o "$RUNNER_TEMP/$archive" \
+            "https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}/$archive"
+          echo "$SHELLCHECK_SHA256  $RUNNER_TEMP/$archive" | sha256sum --check --strict -
+          tar -xJf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" "shellcheck-${SHELLCHECK_VERSION}/shellcheck"
+          "$RUNNER_TEMP/shellcheck-${SHELLCHECK_VERSION}/shellcheck" docker/*.sh test/entrypoint/*.sh
+      - name: hadolint
+        env:
+          # renovate: datasource=github-release-attachments depName=hadolint/hadolint
+          HADOLINT_VERSION: v2.15.1
+          HADOLINT_SHA256: c7187db94eeeeca956519a6af171adc31453941a1e777961f6e680f697c8c507
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/hadolint" \
+            "https://github.com/hadolint/hadolint/releases/download/${HADOLINT_VERSION}/hadolint-linux-x86_64"
+          echo "$HADOLINT_SHA256  $RUNNER_TEMP/hadolint" | sha256sum --check --strict -
+          chmod +x "$RUNNER_TEMP/hadolint"
+          "$RUNNER_TEMP/hadolint" test/entrypoint/Dockerfile
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
@@ -53,6 +76,22 @@ jobs:
           path: dist/
           retention-days: 7
           if-no-files-found: error
+
+  # The sample caller (ADR-0004, ADR-0008): the reusable image workflow from this commit, building the
+  # fixture image and running the entrypoint's container tests as its smoke script. Publishing is off.
+  # release.yml waits for the whole CI run, so a red sample caller blocks a release.
+  sample-caller:
+    permissions:
+      contents: read
+      packages: write # app-image.yml's job asks for it; nothing is pushed with publish: false
+    uses: ./.github/workflows/app-image.yml
+    with:
+      image-name: ghcr.io/towerism/selfhost-kit-fixture
+      file: test/entrypoint/Dockerfile
+      target: fixture
+      publish: false
+      smoke-scripts: |
+        test/entrypoint/run.sh
 
   secret-scan:
     runs-on: ubuntu-24.04
