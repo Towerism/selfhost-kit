@@ -205,14 +205,20 @@ src/
     clock.ts                fakeClock()
     unraid.ts               checkUnraidTemplate(xml, { image, secretTargets })
     index.ts
+  cli/
+    index.ts                the `selfhost-kit` command's logic (docker-assets); not part of the import API
 docker/
   entrypoint.sh             PUID/PGID/UMASK, gosu, optional Litestream supervision
   litestream.yml            replicates the database only, never secrets/
   fetch-litestream.sh       the one Litestream version + sha256 pin, used by app Dockerfiles
 bin/
-  selfhost-kit.mjs          `selfhost-kit docker-assets <dir>`: copies docker/ out of node_modules (real files)
+  selfhost-kit.mjs          a shim over dist/cli/index.js: `selfhost-kit docker-assets <dir>` copies docker/ out
+                            of node_modules (real files)
 release-config/
-  index.json                shareable semantic-release config (conventionalcommits + exec + github)
+  index.js                  shareable semantic-release config (conventionalcommits + exec + github), plain ESM
+  index.d.ts                its hand-written types
+  notes.js                  the release-notes helpers (Security section, advisory links), shared with the kit's
+                            own release.config.mjs
 .github/workflows/
   ci.yml                    the kit's own CI: lint, typecheck, test + coverage, shellcheck, entrypoint image test
   release.yml               semantic-release → npm (provenance) + GitHub Release

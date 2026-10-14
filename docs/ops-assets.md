@@ -23,6 +23,7 @@ runtime stage:
 
 ```dockerfile
 FROM node:24.21.0-slim AS app-build
+WORKDIR /app
 # … install with pnpm and build the app …
 RUN pnpm exec selfhost-kit docker-assets .output/selfhost-kit
 
@@ -36,6 +37,7 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends gosu tini \
  && rm -rf /var/lib/apt/lists/* \
  && gosu nobody true
+WORKDIR /app
 COPY --from=litestream /usr/local/bin/litestream /usr/local/bin/litestream
 COPY --from=app-build /app/.output/selfhost-kit/litestream.yml /etc/litestream.yml
 COPY --from=app-build /app/.output/selfhost-kit/entrypoint.sh /usr/local/bin/entrypoint.sh
@@ -87,8 +89,10 @@ jobs:
 
 `app-image.yml` inputs: `image-name` (required), `target` (default `app`), `file` (default `Dockerfile`),
 `context` (default `.`), `smoke-scripts` (one program per line; each gets the built image's local tag as its
-only argument), `publish` (default `true`). Fork pull requests are built and smoke-tested but never
-published. `app-release.yml` inputs: `image-name` and `digest`, both required; it refuses to release when the
+only argument and `/dev/null` as stdin; with none, the run warns that the image wasn't smoke-tested),
+`publish` (default `true`). The image is built once: what's published is exactly the image the smoke scripts
+tested, pushed under its `sha-…` or `pr-N` tag, with the other tags added by digest. Fork pull requests are
+built and smoke-tested but never published. `app-release.yml` inputs: `image-name` and `digest`, both required; it refuses to release when the
 digest is empty.
 
 ## Release config
@@ -106,14 +110,20 @@ in the notes, under **Security**, with their `Advisory: GHSA-…` linked. Nothin
 
 ## Renovate (in each app)
 
-So a kit fix reaches the app as one pull request ([ADR-0005](architecture/adr/0005-versioning-and-security-fixes.md)):
+So a kit fix reaches the app as one pull request ([ADR-0005](architecture/adr/0005-versioning-and-security-fixes.md)).
+The group is always a `fix(deps)` commit: on its own, the workflow SHA would be a `chore` or `ci` update, and if
+the grouped pull request took that type, merging it would release nothing in the app. `semanticCommits` is
+turned on explicitly, because Renovate ignores `semanticCommitType` when it detects that a repository doesn't
+use semantic commits:
 
 ```json
 {
+  "semanticCommits": "enabled",
   "packageRules": [
     {
       "groupName": "selfhost-kit",
       "matchPackageNames": ["@towerism/selfhost-kit", "Towerism/selfhost-kit"],
+      "semanticCommitType": "fix",
       "minimumReleaseAge": "0 days",
       "schedule": ["at any time"]
     },
