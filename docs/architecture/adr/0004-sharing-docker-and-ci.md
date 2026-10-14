@@ -1,6 +1,6 @@
 # ADR-0004: Share Docker pieces as package assets and CI as reusable workflows
 
-- Status: Accepted (2026-10-13); amended 2026-10-13 (Node 24, below)
+- Status: Accepted (2026-10-13); amended 2026-10-13 (Node 24, below); amended 2026-10-13 (what K3 shipped, below)
 - Date: 2026-10-13
 
 ## Context
@@ -136,3 +136,29 @@ Approved by the owner with the spec on issue #9.
   an npm that can't publish stops the job before any tag is pushed ([docs/releasing.md](../../releasing.md)).
 - **Matrix.** Still none: no consumer stays on Node 22, so CI runs Node 24 only.
 - **Consequence.** An app still on Node 22 gets an `engines` warning from npm or pnpm and is unsupported.
+
+## Amendment (2026-10-13): what K3 shipped
+
+Approved by the owner with the spec on issue #21. It records the decisions K3 (#18, #20) made where they depart
+from the text above or from architecture §4, and how #21 changed `app-image.yml`.
+
+- **The bin is a shim (#18 D6).** `bin/selfhost-kit.mjs` is a three-line shim over the compiled
+  `dist/cli/index.js`. The command's logic lives in TypeScript in `src/cli/`, so it's typed, linted and under
+  the coverage gate. The published bin path is unchanged.
+- **The release config is plain ESM (#18 D7).** `@towerism/selfhost-kit/release-config` is
+  `release-config/index.js` with a hand-written `index.d.ts`, not `index.json`: the advisory-link transform in
+  the release notes is a function, which JSON can't hold. Its notes helpers (`release-config/notes.js`) are
+  shared with the kit's own `release.config.mjs`, so there is one copy.
+- **Litestream is pinned for linux/amd64 only (#18 D5).** The context above describes attendance's per-arch
+  pin in its Dockerfile. `fetch-litestream.sh` pins one version and one sha256, for amd64, in a pair Renovate
+  can keep current, and refuses any other architecture. Architecture §2 makes amd64 the only target. An arm64
+  pin would go stale silently, because CI runs on amd64.
+- **`app-image.yml` builds once (#21).** It builds the image once, with its publish labels, and the smoke
+  scripts test that image. The publish step pushes that same image (by its image ID) under the commit's
+  `sha-…` tag, or the pull request's `pr-N` tag. The other tags are added by digest. The workflow used to build
+  a second time to push, which matched the tested image only when every layer came from the cache. Since the
+  push no longer comes from BuildKit, the published manifest is whatever `docker push` creates on the
+  runner's image store: without the minimal BuildKit provenance attestation on the classic store, possibly
+  with it on the containerd store. Nothing in the kit or the apps reads that attestation.
+- **Consequence.** "Tag the tested digest" now holds by construction: the digest `app-release.yml` tags is the
+  image the smoke scripts ran.

@@ -30,7 +30,6 @@ REPLICA_ARGS="$(mktemp -d)"
 UNREADABLE="$(mktemp -d)" # mode 0700, owned by the runner: PUID can't use it
 ALL_DIRS=("$ROOT_DATA" "$UMASK_DATA" "$USER_DATA" "$ARGS_DATA" "$FIRST_DATA" "$SECOND_DATA" "$BROKEN_DATA"
   "$DENIED_DATA" "$REDACT_DATA" "$REPLICA_MAIN" "$REPLICA_ARGS" "$UNREADABLE")
-REPLICA="$REPLICA_MAIN"
 
 as_root() { # as_root <dir> <shell script>: runs the script on <dir> mounted at /x, as root
   docker run --rm -v "$1:/x" --entrypoint sh "$IMAGE" -c "$2"
@@ -94,25 +93,25 @@ wait_exited() {
   return 1
 }
 
-# start <data dir> [docker run options…] [-- command…]
+# start <data dir> <replica dir> [docker run options…] [-- command…]
 start() {
-  local data="$1"
-  shift
+  local data="$1" replica="$2"
+  shift 2
   local opts=()
   while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do
     opts+=("$1")
     shift
   done
   [ "${1:-}" = "--" ] && shift
-  docker run -d --name "$NAME" -v "$data:/data" -v "$REPLICA:/replica" "${opts[@]}" "$IMAGE" "$@" >/dev/null
+  docker run -d --name "$NAME" -v "$data:/data" -v "$replica:/replica" "${opts[@]}" "$IMAGE" "$@" >/dev/null
   wait_healthy
 }
 
-# run_to_exit <data dir> [docker run options…]: for containers that must stop on their own.
+# run_to_exit <data dir> <replica dir> [docker run options…]: for containers that must stop on their own.
 run_to_exit() {
-  local data="$1"
-  shift
-  docker run -d --name "$NAME" -v "$data:/data" -v "$REPLICA:/replica" "$@" "$IMAGE" >/dev/null
+  local data="$1" replica="$2"
+  shift 2
+  docker run -d --name "$NAME" -v "$data:/data" -v "$replica:/replica" "$@" "$IMAGE" >/dev/null
   wait_exited || true # the checks below report a container that is still running
 }
 
@@ -150,7 +149,7 @@ as_root "$REPLICA_ARGS" "chown $PUID:$PGID /x"
 
 echo "started as root: ownership and privilege drop"
 as_root "$ROOT_DATA" 'mkdir -p /x/old && touch /x/old/file && chown -R 0:0 /x/old'
-start "$ROOT_DATA" -e PUID=$PUID -e PGID=$PGID
+start "$ROOT_DATA" "$REPLICA_MAIN" -e PUID=$PUID -e PGID=$PGID
 check "everything under /data is owned by PUID:PGID, the root-owned file included" test -z "$(wrong_owner)"
 check "secrets/fixture-secret is mode 600" test "$(mode_of /data/secrets/fixture-secret)" = 600
 check "node runs as PUID:PGID, not root" test "$(process_owner node)" = "$PUID:$PGID"
@@ -160,41 +159,39 @@ check "and the log says nothing about litestream" bash -c "! docker logs '$NAME'
 docker stop "$NAME" >/dev/null
 check "a graceful stop exits cleanly (not SIGKILL)" test "$(exit_code)" != 137
 docker rm "$NAME" >/dev/null
-start "$ROOT_DATA" -e PUID=$PUID -e PGID=$PGID
+start "$ROOT_DATA" "$REPLICA_MAIN" -e PUID=$PUID -e PGID=$PGID
 check "a restart on the same /data keeps everything owned by PUID:PGID" test -z "$(wrong_owner)"
 stop_and_remove
 
 echo "UMASK=027"
-start "$UMASK_DATA" -e PUID=$PUID -e PGID=$PGID -e UMASK=027
+start "$UMASK_DATA" "$REPLICA_MAIN" -e PUID=$PUID -e PGID=$PGID -e UMASK=027
 check "files are created mode 640" test "$(mode_of /data/umask-probe)" = 640
 stop_and_remove
 
 echo "started as a non-root user (docker run --user)"
 as_root "$USER_DATA" "chown $PUID:$PGID /x && touch /x/root-file && chown 0:0 /x/root-file"
-start "$USER_DATA" --user "$PUID:$PGID"
+start "$USER_DATA" "$REPLICA_MAIN" --user "$PUID:$PGID"
 check "node runs as that user" test "$(process_owner node)" = "$PUID:$PGID"
 check "nothing is chowned" test "$(owner_of /data/root-file)" = "0:0"
 stop_and_remove
 
 echo "arguments reach the command exactly"
-start "$ARGS_DATA" -e PUID=$PUID -e PGID=$PGID -- node /app/server.mjs "two words" "it's"
+start "$ARGS_DATA" "$REPLICA_MAIN" -e PUID=$PUID -e PGID=$PGID -- node /app/server.mjs "two words" "it's"
 check "without Litestream" test "$(get /argv)" = '["two words","it'"'"'s"]'
 stop_and_remove
-REPLICA="$REPLICA_ARGS"
-start "$ARGS_DATA" -e PUID=$PUID -e PGID=$PGID -e LITESTREAM_REPLICA_URL="$URL" -- node /app/server.mjs "two words" "it's"
+start "$ARGS_DATA" "$REPLICA_ARGS" -e PUID=$PUID -e PGID=$PGID -e LITESTREAM_REPLICA_URL="$URL" -- node /app/server.mjs "two words" "it's"
 check "under litestream replicate -exec" test "$(get /argv)" = '["two words","it'"'"'s"]'
 stop_and_remove
-REPLICA="$REPLICA_MAIN"
 
 echo "refuses a non-numeric PUID"
-run_to_exit "$BROKEN_DATA" -e PUID=abc
+run_to_exit "$BROKEN_DATA" "$REPLICA_MAIN" -e PUID=abc
 check "the container exits on its own" test "$(docker inspect -f '{{.State.Running}}' "$NAME")" = false
 check "with status 1" test "$(exit_code)" = 1
 check "the log says why" grep -qF '[entrypoint] PUID and PGID must be numeric (got PUID=abc PGID=100)' <(logs)
 docker rm "$NAME" >/dev/null
 
 echo "Litestream: first boot with an empty replica"
-start "$FIRST_DATA" -e PUID=$PUID -e PGID=$PGID -e LITESTREAM_REPLICA_URL="$URL"
+start "$FIRST_DATA" "$REPLICA_MAIN" -e PUID=$PUID -e PGID=$PGID -e LITESTREAM_REPLICA_URL="$URL"
 check "the log names the replica target" grep -qxF "[entrypoint] litestream: replicating /data/app.db to $URL" <(logs)
 check "an empty replica means a normal first run" \
   grep -qxF "[entrypoint] litestream: no replica found, starting with an empty database" <(logs)
@@ -208,22 +205,25 @@ check "a graceful stop exits cleanly (not SIGKILL)" test "$(exit_code)" != 137
 docker rm "$NAME" >/dev/null
 SECRET="$(as_root "$FIRST_DATA" 'cat /x/secrets/fixture-secret')"
 check "the secret is a real value" test -n "$SECRET"
+# The same grep must find the row, or "no secret bytes" below would pass vacuously (e.g. compressed .ltx).
+check "the written row is found in the replica by the same grep" \
+  docker run --rm -v "$REPLICA_MAIN:/x" --entrypoint grep "$IMAGE" -rqF 'hello replica' /x
 check "no secret bytes in the replica" bash -c "! docker run --rm -v '$REPLICA_MAIN:/x' --entrypoint grep '$IMAGE' -rqF '$SECRET' /x"
 
 echo "Litestream: a new box (empty /data, same replica)"
-start "$SECOND_DATA" -e PUID=$PUID -e PGID=$PGID -e LITESTREAM_REPLICA_URL="$URL"
+start "$SECOND_DATA" "$REPLICA_MAIN" -e PUID=$PUID -e PGID=$PGID -e LITESTREAM_REPLICA_URL="$URL"
 check "restored from the replica before starting" \
   grep -qxF "[entrypoint] litestream: restored /data/app.db from replica" <(logs)
 check "the row came back" test "$(get /rows)" = '["hello replica"]'
 stop_and_remove
 
 echo "Litestream: restart with an existing database"
-start "$SECOND_DATA" -e PUID=$PUID -e PGID=$PGID -e LITESTREAM_REPLICA_URL="$URL"
+start "$SECOND_DATA" "$REPLICA_MAIN" -e PUID=$PUID -e PGID=$PGID -e LITESTREAM_REPLICA_URL="$URL"
 check "does not restore over an existing database" bash -c "! docker logs '$NAME' 2>&1 | grep -q restored"
 stop_and_remove
 
 echo "Litestream: a broken replica URL"
-run_to_exit "$SECOND_DATA" -e PUID=$PUID -e PGID=$PGID -e LITESTREAM_REPLICA_URL=bogus://nowhere
+run_to_exit "$SECOND_DATA" "$REPLICA_MAIN" -e PUID=$PUID -e PGID=$PGID -e LITESTREAM_REPLICA_URL=bogus://nowhere
 check "the container exits on its own" test "$(docker inspect -f '{{.State.Running}}' "$NAME")" = false
 check "with a non-zero status" test "$(exit_code)" != 0
 check "litestream's error is in the log" grep -q 'unknown replica type' <(logs)
@@ -231,16 +231,14 @@ docker rm "$NAME" >/dev/null
 
 # With an empty /data the startup restore hits the permission error and stops the container.
 echo "Litestream: empty /data and a replica directory PUID:PGID cannot read"
-REPLICA="$UNREADABLE"
-run_to_exit "$DENIED_DATA" -e PUID=$PUID -e PGID=$PGID -e LITESTREAM_REPLICA_URL="$URL"
+run_to_exit "$DENIED_DATA" "$UNREADABLE" -e PUID=$PUID -e PGID=$PGID -e LITESTREAM_REPLICA_URL="$URL"
 check "the container exits on its own" test "$(docker inspect -f '{{.State.Running}}' "$NAME")" = false
 check "with a non-zero status" test "$(exit_code)" != 0
 check "the permission error is in the log" grep -q 'permission denied' <(logs)
 docker rm "$NAME" >/dev/null
-REPLICA="$REPLICA_MAIN"
 
 echo "Litestream: credentials in the replica URL are never logged by the entrypoint"
-run_to_exit "$REDACT_DATA" -e PUID=$PUID -e PGID=$PGID \
+run_to_exit "$REDACT_DATA" "$REPLICA_MAIN" -e PUID=$PUID -e PGID=$PGID \
   -e LITESTREAM_REPLICA_URL='s3://user:hunter2@bucket.invalid/db?endpoint=http://127.0.0.1:9'
 check "the container exits on its own" test "$(docker inspect -f '{{.State.Running}}' "$NAME")" = false
 check "with a non-zero status" test "$(exit_code)" != 0
