@@ -8,9 +8,6 @@ importers:
 
   .:
     dependencies:
-      h3:
-        specifier: ^1.15
-        version: 1.15.11
       pino:
         specifier: ^10.4.0
         version: 10.4.0
@@ -51,6 +48,9 @@ importers:
       globals:
         specifier: ^17.13.0
         version: 17.13.0
+      h3:
+        specifier: ^1.15.11
+        version: 1.15.11
       prettier:
         specifier: ^3.9.10
         version: 3.9.10

@@ -19,11 +19,14 @@ reaches both apps:
 It ships as one npm package, `@towerism/selfhost-kit`, with a framework-free core and h3/Nitro adapters on
 `@towerism/selfhost-kit/nitro`.
 
-> **Status: K1 (core) delivered.** The framework-free core is available from `@towerism/selfhost-kit`: the
-> vault, secret resolution, the runtime env and launcher, the logger with redaction and request ids, the
-> CSP/header builder, the rate limiter and trusted proxies, and setup codes. `@towerism/selfhost-kit/testing`
-> has the vault and redaction contract suites, the v1 vault vectors, secret-dir fixtures and a fake clock.
-> `/nitro` stays empty until K2 (Nitro adapters).
+> **Status: K2 (Nitro adapters) delivered.** The framework-free core is available from
+> `@towerism/selfhost-kit`: the vault, secret resolution, the runtime env and launcher, the logger with
+> redaction and request ids, the CSP/header builder, the rate limiter and trusted proxies, and setup codes.
+> `@towerism/selfhost-kit/nitro` has the h3 adapters: `jsonOnly` and `bodySizeLimit` middleware, the
+> security-headers and request-log plugins, the `enforceRateLimit` guard and the JSON error handler.
+> `@towerism/selfhost-kit/testing` has the vault and redaction contract suites, the v1 vault vectors,
+> secret-dir fixtures, a fake clock, an in-memory Nitro-like `h3TestApp`, and the JSON-only, body-size and
+> security-headers contract suites.
 
 ## Install
 
@@ -31,8 +34,8 @@ It ships as one npm package, `@towerism/selfhost-kit`, with a framework-free cor
 pnpm add --save-exact @towerism/selfhost-kit
 ```
 
-Requires Node 24.11 or later. The package is ESM only. `h3` (for `/nitro`) and `vitest` (for `/testing`)
-are optional peer dependencies. While the kit is in `0.x`, pin an exact version: a minor release may break.
+Requires Node 24.11 or later. The package is ESM only. `h3` (for `/nitro`) and `vitest` plus `h3`
+(for `/testing`) are optional peer dependencies. While the kit is in `0.x`, pin an exact version: a minor release may break.
 
 ## Security
 

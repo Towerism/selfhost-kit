@@ -95,6 +95,8 @@ export async function makeConsumer(kit: PackedKit, name: string, peers: string[]
             moduleResolution,
             strict: true,
             noEmit: true,
+            // Nitro's server tsconfig: h3's declarations refer to the WebWorker `FetchEvent`.
+            lib: ['ES2023', 'WebWorker', 'DOM.Iterable'],
             // Every consumer is a Node app: the vault's API is in Buffers.
             types: ['node'],
           },
