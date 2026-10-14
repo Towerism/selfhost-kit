@@ -94,7 +94,7 @@ describe('app-image.yml publish', () => {
     expect(run.code).not.toBe(0);
     expect(run.outputs).toEqual({});
     expect(run.calls).toHaveLength(dockerCalls);
-    if (!('status' in push)) expect(run.stdout).toMatch(/^::error::/m);
+    expect(run.stdout).toMatch(/^::error::/m);
   });
 });
 

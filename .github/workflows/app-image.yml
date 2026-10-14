@@ -161,7 +161,11 @@ jobs:
             case "$tag" in *:sha-*) primary="$tag" ;; esac
           done
           docker tag "$IMAGE_ID" "$primary"
-          pushed="$(docker push "$primary")"
+          if ! pushed="$(docker push "$primary")"; then
+            printf '%s\n' "$pushed"
+            echo "::error::docker push $primary failed; nothing was published."
+            exit 1
+          fi
           printf '%s\n' "$pushed"
           digest="$(printf '%s\n' "$pushed" | sed -n 's/.*digest: \(sha256:[0-9a-f]\{64\}\).*/\1/p' | tail -n 1)"
           if [ -z "$digest" ]; then
