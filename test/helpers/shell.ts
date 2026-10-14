@@ -1,6 +1,7 @@
 import { execFile, execFileSync } from 'node:child_process';
 import { chmod, mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export interface ScriptResult {
   code: number | null;
@@ -44,49 +45,23 @@ export interface StubCall {
   env: Record<string, string | undefined>;
 }
 
+const STUB_SCRIPT = fileURLToPath(new URL('stub-bin.cjs', import.meta.url));
+
+/** Single-quotes `word` for sh. */
+const shQuote = (word: string) => `'${word.replaceAll("'", `'\\''`)}'`;
+
+export type StubBehaviour = 'record' | 'exec-rest' | 'litestream' | 'serve' | 'fail' | 'answer';
+
 /**
- * Writes a stub executable `name` into `dir`. It appends a JSON line describing its call to `$STUB_LOG`,
- * then does what `behaviour` says. Stubs record what they were asked; the outcome comes from the script.
+ * Writes a stub executable `name` into `dir`: a two-line sh wrapper over the static stub-bin.cjs, which
+ * appends a JSON line describing its call to `$STUB_LOG`, then does what `behaviour` says. Stubs record
+ * what they were asked; the outcome comes from the script. Node is named by absolute path because the
+ * scripts under test run with a `PATH` that holds no `node`.
  */
-export async function stubBin(
-  dir: string,
-  name: string,
-  behaviour: 'record' | 'exec-rest' | 'litestream' | 'serve' | 'fail' = 'record',
-): Promise<void> {
-  const source = `#!${process.execPath}
-const { appendFileSync, writeFileSync } = require('node:fs');
-const { execFileSync, spawnSync } = require('node:child_process');
-const argv = process.argv.slice(2);
-const call = { tool: ${JSON.stringify(name)}, argv, env: {
-  LITESTREAM_REPLICA_URL: process.env.LITESTREAM_REPLICA_URL,
-  NUXT_DATABASE_PATH: process.env.NUXT_DATABASE_PATH,
-} };
-const behaviour = ${JSON.stringify(behaviour)};
-if (behaviour === 'litestream' && argv[0] === 'replicate') {
-  const exec = argv[argv.indexOf('-exec') + 1];
-  const out = execFileSync('/bin/sh', ['-c', 'eval "set -- $1"; printf "%s\\\\0" "$@"', 'split', exec]);
-  call.execWords = out.toString().split('\\0').slice(0, -1);
-}
-appendFileSync(process.env.STUB_LOG, JSON.stringify(call) + '\\n');
-if (behaviour === 'fail') process.exit(1);
-if (behaviour === 'exec-rest') {
-  const r = spawnSync(argv[1], argv.slice(2), { stdio: 'inherit' });
-  process.exit(r.status ?? 1);
-}
-if (behaviour === 'serve') {
-  // A downloader: writes $STUB_BYTES to the output file named after -O (wget) or -o (curl).
-  const flag = argv.includes('-O') ? '-O' : '-o';
-  writeFileSync(argv[argv.indexOf(flag) + 1], process.env.STUB_BYTES ?? '');
-  process.exit(Number(process.env.STUB_DOWNLOAD_STATUS ?? 0));
-}
-if (behaviour === 'litestream' && argv[0] === 'restore') {
-  const mode = process.env.STUB_RESTORE ?? 'none';
-  if (mode === 'fail') { process.stderr.write('restore failed\\n'); process.exit(1); }
-  if (mode === 'create') writeFileSync(argv.at(-1), '');
-}
-`;
+export async function stubBin(dir: string, name: string, behaviour: StubBehaviour = 'record'): Promise<void> {
+  const words = [process.execPath, STUB_SCRIPT, name, behaviour].map(shQuote).join(' ');
   const path = join(dir, name);
-  await writeFile(path, source);
+  await writeFile(path, `#!/bin/sh\nexec ${words} "$@"\n`);
   await chmod(path, 0o755);
 }
 
