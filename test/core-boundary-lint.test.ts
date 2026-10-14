@@ -31,9 +31,23 @@ describe('core boundary lint rule', () => {
     expect(messages[0]!.severity).toBe(2);
   });
 
-  it.each(forbidden)('allows %s in src/nitro', async (code) => {
+  it.each(forbidden.filter((code) => code.includes("'h3'")))('allows %s in src/nitro', async (code) => {
     expect(await boundaryMessages(code, 'src/nitro/example.ts')).toEqual([]);
   });
+
+  it.each(forbidden.filter((code) => !code.includes("'h3'")))('rejects %s in src/nitro', async (code) => {
+    const messages = await boundaryMessages(code, 'src/nitro/example.ts');
+    expect(messages).toHaveLength(1);
+    expect(messages[0]!.message).toContain('src/nitro');
+    expect(messages[0]!.severity).toBe(2);
+  });
+
+  it.each(["import type { NitroApp } from 'nitropack';", "import { useEvent } from 'nuxt/app';"])(
+    'rejects the type-only or deep import %s in src/nitro',
+    async (code) => {
+      expect(await boundaryMessages(code, 'src/nitro/example.ts')).toHaveLength(1);
+    },
+  );
 
   it.each(["import { x } from 'h3-utils';", "import { y } from './h3.js';", "import { z } from 'nuxtlike';"])(
     'does not flag the lookalike %s',
