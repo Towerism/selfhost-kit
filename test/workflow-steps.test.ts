@@ -64,7 +64,18 @@ describe('app-image.yml publish', () => {
     expect(calls(run)).toEqual([
       ['docker', 'tag', ID, 'ghcr.io/x/app:sha-abc1234'],
       ['docker', 'push', 'ghcr.io/x/app:sha-abc1234'],
-      ['docker', 'buildx', 'imagetools', 'create', '--tag', 'ghcr.io/x/app:edge', `ghcr.io/x/app@${DIGEST}`],
+      // Without --prefer-index=false, buildx >= 0.13 wraps the pushed manifest in a new index, so `edge`
+      // would name another digest than the one this job outputs (#30).
+      [
+        'docker',
+        'buildx',
+        'imagetools',
+        'create',
+        '--prefer-index=false',
+        '--tag',
+        'ghcr.io/x/app:edge',
+        `ghcr.io/x/app@${DIGEST}`,
+      ],
     ]);
     expect(run.outputs).toEqual({ digest: DIGEST });
   });
@@ -105,6 +116,68 @@ describe('app-release.yml', () => {
   const env = { GITHUB_REPOSITORY: 'o/app', GITHUB_SHA: SHA, GH_TOKEN: 'synthetic-token' };
   const refHeadsMain = ['api', 'repos/o/app/git/ref/heads/main'];
   const refTag = ['api', 'repos/o/app/git/ref/tags/v1.2.3'];
+
+  describe('tagging the image X.Y.Z, X.Y and latest', () => {
+    const DIGEST = `sha256:${'d'.repeat(64)}`;
+    const WRAPPED = `sha256:${'e'.repeat(64)}`;
+    const IMAGE = 'ghcr.io/x/app';
+    const TAGS = [`${IMAGE}:1.2.3`, `${IMAGE}:1.2`, `${IMAGE}:latest`];
+    // `imagetools inspect --format '{{json .Manifest}}'` as buildx prints it: indented, the descriptor's own
+    // digest at the top level. An index lists more digests further in.
+    const manifest = (digest: string) =>
+      `{\n  "schemaVersion": 2,\n  "mediaType": "application/vnd.oci.image.index.v1+json",\n  "digest": "${digest}",\n  "size": 402,\n  "manifests": [\n    {\n      "digest": "${DIGEST}",\n      "size": 734\n    }\n  ]\n}\n`;
+    const inspect = (tag: string) => ['buildx', 'imagetools', 'inspect', tag];
+    const tag = (answers: { argv: string[]; stdout?: string; status?: number }[], digest = DIGEST) =>
+      runStep('app-release.yml', 'Tag the image X.Y.Z, X.Y, latest', {
+        env: { IMAGE_NAME: IMAGE, VERSION: '1.2.3', DIGEST: digest },
+        stubs: { docker: answers },
+      });
+
+    it('tags exactly the tested digest, then checks that each tag names it', async () => {
+      const run = await tag(TAGS.map((t) => ({ argv: inspect(t), stdout: manifest(DIGEST) })));
+      expect(run.code).toBe(0);
+      expect(calls(run)).toEqual([
+        [
+          'docker',
+          'buildx',
+          'imagetools',
+          'create',
+          '--prefer-index=false',
+          ...TAGS.flatMap((t) => ['--tag', t]),
+          `${IMAGE}@${DIGEST}`,
+        ],
+        ...TAGS.map((t) => ['docker', ...inspect(t), '--format', '{{json .Manifest}}']),
+      ]);
+      expect(run.stdout).not.toContain('::error::');
+    });
+
+    it.each(TAGS)('fails before the git tag when %s names another digest', async (wrong) => {
+      const run = await tag(
+        TAGS.map((t) => ({ argv: inspect(t), stdout: manifest(t === wrong ? WRAPPED : DIGEST) })),
+      );
+      expect(run.code).toBe(1);
+      expect(run.stdout).toMatch(/^::error::/m);
+      const error = run.stdout.split('\n').find((line) => line.startsWith('::error::'))!;
+      expect(error).toContain(wrong);
+      expect(error).toContain(WRAPPED);
+      expect(error).toContain(DIGEST);
+    });
+
+    it('fails when a tag cannot be inspected', async () => {
+      const run = await tag([
+        { argv: inspect(TAGS[0]!), stdout: manifest(DIGEST) },
+        { argv: inspect(TAGS[1]!), status: 1 },
+      ]);
+      expect(run.code).not.toBe(0);
+    });
+
+    it('refuses to tag anything without a digest', async () => {
+      const run = await tag([], '');
+      expect(run.code).toBe(1);
+      expect(run.calls).toEqual([]);
+      expect(run.stdout).toMatch(/^::error::The image job published no digest/m);
+    });
+  });
 
   describe("checking that main hasn't moved on", () => {
     const check = (answer: { stdout?: string; status?: number }) =>

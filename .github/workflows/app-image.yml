@@ -140,6 +140,8 @@ jobs:
 
       # No rebuild: the tested image (by its ID, not the tag a smoke script could move) is pushed under
       # one per-commit or per-PR tag, and the other tags name the digest that push reported.
+      # --prefer-index=false: otherwise buildx (>= 0.13) wraps a single image manifest in a new one-entry
+      # index, and the tag would name that index's digest instead of the one this job outputs.
       - name: Publish to GHCR
         id: push
         if: steps.publish.outputs.enabled == 'true'
@@ -174,7 +176,7 @@ jobs:
           fi
           for tag in "${tags[@]}"; do
             if [ "$tag" != "$primary" ]; then
-              docker buildx imagetools create --tag "$tag" "$IMAGE_NAME@$digest"
+              docker buildx imagetools create --prefer-index=false --tag "$tag" "$IMAGE_NAME@$digest"
             fi
           done
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
