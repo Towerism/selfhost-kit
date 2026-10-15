@@ -191,7 +191,9 @@ Outputs: none
   });
 });
 
-describe('api:report and api:check', () => {
+// These compile the kit's four entry points with the real TypeScript compiler, which takes seconds on a CI
+// runner under coverage: the timeout is headroom, not an assertion on speed.
+describe('api:report and api:check', { timeout: 30_000 }, () => {
   it('writes one report per entry point and one for the workflows', async () => {
     const root = await kitRoot();
     const { streams } = io();
@@ -232,6 +234,15 @@ describe('api:report and api:check', () => {
     const { streams, out } = io();
     expect(main([], { root, ...streams })).toBe(1);
     expect(out.stderr).toBe('dist/ not found: run pnpm build first\n');
+    await expect(readdir(join(root, 'api'))).rejects.toThrow();
+  });
+
+  it('names a missing entry point, and writes nothing', async () => {
+    const root = await kitRoot();
+    await rm(join(root, 'dist/nitro/index.d.ts'));
+    const { streams, out } = io();
+    expect(main([], { root, ...streams })).toBe(1);
+    expect(out.stderr).toBe('dist/nitro/index.d.ts not found\n');
     await expect(readdir(join(root, 'api'))).rejects.toThrow();
   });
 

@@ -75,22 +75,32 @@ function entry(name, kind, declarations, level) {
   return `${level} \`${name}\` (${kind})\n\n\`\`\`ts\n${body}\n\`\`\`\n`;
 }
 
+const COMPILER_OPTIONS = {
+  module: ts.ModuleKind.NodeNext,
+  moduleResolution: ts.ModuleResolutionKind.NodeNext,
+  strict: true,
+  skipLibCheck: true,
+  noEmit: true,
+  types: [],
+};
+
+/**
+ * One TypeScript program over the given `.d.ts` files. Building the program is most of a report's cost, so
+ * `buildReports` builds one for every entry point instead of one each.
+ * @param {readonly string[]} paths absolute paths
+ */
+const createProgram = (paths) => ts.createProgram([...paths], COMPILER_OPTIONS);
+
 /**
  * The report for one entry point's `.d.ts`.
- * @param {{ root: string; dts: string; title: string }} opts `dts` is relative to `root`.
+ * @param {{ root: string; dts: string; title: string; program?: ts.Program }} opts `dts` is relative to
+ * `root`. `program` must contain the entry point; one is built when it's omitted.
  * @returns {string}
  */
-export function entryReport({ root, dts, title }) {
+export function entryReport({ root, dts, title, program: shared }) {
   const path = join(root, dts);
   if (!existsSync(path)) throw new ApiReportError(`${dts} not found`);
-  const program = ts.createProgram([path], {
-    module: ts.ModuleKind.NodeNext,
-    moduleResolution: ts.ModuleResolutionKind.NodeNext,
-    strict: true,
-    skipLibCheck: true,
-    noEmit: true,
-    types: [],
-  });
+  const program = shared ?? createProgram([path]);
   const source = /** @type {ts.SourceFile} */ (program.getSourceFile(path));
   const [syntax] = program.getSyntacticDiagnostics(source);
   if (syntax) {
@@ -237,11 +247,15 @@ export function workflowsReport(workflows) {
  */
 export function buildReports(root) {
   if (!existsSync(join(root, 'dist'))) throw new ApiReportError('dist/ not found: run pnpm build first');
+  const entries = REPORTS.filter((report) => report.kind === 'entry');
+  const missing = entries.find((report) => !existsSync(join(root, report.source)));
+  if (missing) throw new ApiReportError(`${missing.source} not found`);
+  const program = createProgram(entries.map((report) => join(root, report.source)));
   return REPORTS.map((report) => ({
     file: report.file,
     content:
       report.kind === 'entry'
-        ? entryReport({ root, dts: report.source, title: report.title })
+        ? entryReport({ root, dts: report.source, title: report.title, program })
         : workflowsReport(
             WORKFLOWS.map((name) => ({ name, text: readFileSync(join(root, report.source, name), 'utf8') })),
           ),
