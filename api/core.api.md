@@ -53,7 +53,7 @@ function createLogger(options: CreateLoggerOptions): Logger;
 ## `CreateLoggerOptions` (interface)
 
 ```ts
-interface CreateLoggerOptions { scope: string; redactor?: Redactor; level?: string; format?: string; context?: () => Record<string, unknown> | undefined; destination?: LogDestination; }
+interface CreateLoggerOptions { scope: string; redactor: Redactor; level?: string; format?: string; context?: () => Record<string, unknown> | undefined; destination?: LogDestination; }
 ```
 
 ## `createRedactor` (function)
@@ -131,7 +131,7 @@ function isHttpsSite(siteUrl: string | undefined): boolean;
 ## `LauncherOptions` (interface)
 
 ```ts
-interface LauncherOptions { prepare: (env: Env) => PreparedEnv; server: URL; logger?: Logger; }
+interface LauncherOptions { prepare: (env: Env) => PreparedEnv; server: URL; logger: Logger; }
 ```
 
 ## `LogDestination` (interface)

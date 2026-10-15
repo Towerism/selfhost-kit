@@ -9,6 +9,7 @@ type Options = Partial<Parameters<typeof createLogger>[0]>;
 function json(opts: Options = {}) {
   const out = memoryDestination();
   const log = createLogger({
+    redactor: createRedactor(),
     scope: 'test',
     level: 'info',
     format: 'json',
@@ -21,6 +22,7 @@ function json(opts: Options = {}) {
 function pretty(opts: Options = {}, isTTY = false) {
   const out = memoryDestination(isTTY);
   const log = createLogger({
+    redactor: createRedactor(),
     scope: 'test',
     level: 'info',
     format: 'pretty',
@@ -96,7 +98,13 @@ describe('createLogger, json format', () => {
 
   it('warns once each for an unknown level and an unknown format', () => {
     const out = memoryDestination();
-    createLogger({ scope: 'test', level: 'loud', format: 'xml', destination: out.destination }).info('after');
+    createLogger({
+      redactor: createRedactor(),
+      scope: 'test',
+      level: 'loud',
+      format: 'xml',
+      destination: out.destination,
+    }).info('after');
     expect(out.lines).toHaveLength(3);
     expect(out.lines[0]).toContain('NUXT_LOG_LEVEL "loud"');
     expect(out.lines[1]).toContain('NUXT_LOG_FORMAT "xml" is not one of pretty, json; using pretty.');
@@ -112,9 +120,18 @@ describe('createLogger, json format', () => {
     expect(p.out.lines).toHaveLength(1);
   });
 
+  // Without the app's redactor a logger would hide only the base keys, so there is no default.
+  it('refuses to build without a redactor', () => {
+    const message = "createLogger needs a redactor: pass createRedactor({ extraKeys }) with the app's keys";
+    // @ts-expect-error -- the redactor is required
+    expect(() => createLogger({ scope: 'test' })).toThrow(new TypeError(message));
+    // @ts-expect-error -- and may not be undefined
+    expect(() => createLogger({ scope: 'test', redactor: undefined })).toThrow(new TypeError(message));
+  });
+
   it('writes to stdout by default, and nothing at all when silent', () => {
     expect(() => {
-      createLogger({ scope: 'test', level: 'silent' }).error('nothing');
+      createLogger({ redactor: createRedactor(), scope: 'test', level: 'silent' }).error('nothing');
     }).not.toThrow();
   });
 
@@ -238,6 +255,7 @@ describe('createLogger, json format', () => {
   it('swallows a failing destination (closed pipe) instead of crashing, and keeps trying', () => {
     let calls = 0;
     const log = createLogger({
+      redactor: createRedactor(),
       scope: 'test',
       format: 'json',
       destination: {
@@ -259,7 +277,8 @@ describe('createLogger, json format', () => {
       env: { NUXT_LOG_LEVEL: 'warn', NUXT_LOG_FORMAT: 'JSON' },
       source: `
         import { createLogger } from '${sourceUrl('src/core/logging/logger.ts')}';
-        const log = createLogger({ scope: 'env' });
+        import { createRedactor } from '${sourceUrl('src/core/logging/redact.ts')}';
+        const log = createLogger({ redactor: createRedactor(), scope: 'env' });
         log.info('hidden');
         log.warn('shown');
       `,
@@ -280,7 +299,12 @@ describe('createLogger, pretty format', () => {
 
   it('is the default, and prints one readable line with the fields after the message', () => {
     const out = memoryDestination();
-    const log = createLogger({ scope: 'test', level: 'info', destination: out.destination });
+    const log = createLogger({
+      redactor: createRedactor(),
+      scope: 'test',
+      level: 'info',
+      destination: out.destination,
+    });
 
     log.child('submission').warn('#12 failed', { submissionId: 12 });
 
@@ -367,9 +391,10 @@ describe('createLogger, pretty format', () => {
 describe('createLogger, pretty format in a real process', () => {
   const script = `
     import { createLogger } from '${sourceUrl('src/core/logging/logger.ts')}';
+        import { createRedactor } from '${sourceUrl('src/core/logging/redact.ts')}';
     Date.now = () => Date.parse('2026-10-10T19:03:22.123Z');
     const lines = [];
-    const log = createLogger({ scope: 'tz', level: 'info', destination: { isTTY: process.env.TTY === '1', write: (l) => lines.push(l) } });
+    const log = createLogger({ redactor: createRedactor(), scope: 'tz', level: 'info', destination: { isTTY: process.env.TTY === '1', write: (l) => lines.push(l) } });
     log.info('x');
     process.stdout.write(JSON.stringify(lines));
   `;

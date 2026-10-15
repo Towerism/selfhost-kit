@@ -33,12 +33,12 @@ describe('exports, as a consumer sees them', () => {
   it('uses the core with only its declared dependencies, and no h3 or vitest', async () => {
     const out = await consumer.node(`
       import { createRequire } from 'node:module';
-      import { createLogger, createVault, prepareRuntimeEnv, stringVault } from '@towerism/selfhost-kit';
+      import { createLogger, createRedactor, createVault, prepareRuntimeEnv, stringVault } from '@towerism/selfhost-kit';
       const require = createRequire(import.meta.url);
       const absent = ['h3', 'vitest'].filter((p) => { try { require.resolve(p); return false; } catch { return true; } });
       const vault = stringVault(createVault({ key: Buffer.alloc(32, 7).toString('base64'), label: 'consumer' }));
       const lines = [];
-      createLogger({ scope: 'consumer', format: 'json', destination: { write: (l) => lines.push(l) } })
+      createLogger({ redactor: createRedactor(), scope: 'consumer', format: 'json', destination: { write: (l) => lines.push(l) } })
         .info('hello', { token: 'secret-value' });
       const { env } = prepareRuntimeEnv({ NUXT_PUBLIC_SITE_URL: 'https://example.com' }, { secrets: [] });
       console.log(JSON.stringify({

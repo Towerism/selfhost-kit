@@ -1,5 +1,7 @@
 // An app's launcher, run as a real process by the launcher tests. SCENARIO picks what `prepare` does.
 import { InvalidConfigError, prepareRuntimeEnv } from '../../../src/core/runtime/env.js';
+import { createLogger } from '../../../src/core/logging/logger.js';
+import { createRedactor } from '../../../src/core/logging/redact.js';
 import { runLauncher } from '../../../src/core/runtime/launcher.js';
 import { aes256Key } from '../../../src/core/secrets/index.js';
 
@@ -20,4 +22,8 @@ const server = new URL(
   import.meta.url,
 );
 
-await runLauncher({ prepare, server });
+await runLauncher({
+  prepare,
+  server,
+  logger: createLogger({ scope: 'startup', redactor: createRedactor() }),
+});

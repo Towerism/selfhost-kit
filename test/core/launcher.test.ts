@@ -77,10 +77,23 @@ describe('launch', () => {
     expect(proc.exitCodes).toEqual([]);
   });
 
-  it('builds its own startup logger when the app gives none', async () => {
-    const proc = fakeProcess({});
-    await launch({ prepare: () => ({ env: {}, log: [] }), server: stubServer() }, proc);
-    expect(globalThis.launchEvents).toEqual(['server imported']);
+  // A logger the launcher built itself would redact only the base keys, never the app's own.
+  it("refuses to start without the app's logger, before prepare runs or the server loads", async () => {
+    const proc = fakeProcess({ KEEP: 'k' });
+    let prepared = false;
+    const opts = {
+      prepare: () => {
+        prepared = true;
+        return { env: {}, log: [] };
+      },
+      server: stubServer(),
+    };
+    // @ts-expect-error -- the logger is required
+    const run = launch(opts, proc);
+    await expect(run).rejects.toThrow(new TypeError("runLauncher needs a logger: pass the app's logger"));
+    expect(prepared).toBe(false);
+    expect(globalThis.launchEvents).toEqual([]);
+    expect(proc.env).toEqual({ KEEP: 'k' });
   });
 
   it.each([
