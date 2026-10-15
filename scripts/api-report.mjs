@@ -123,8 +123,18 @@ export function entryReport({ root, dts, title }) {
   const referenced = new Map();
   /** @param {ts.Node} node */
   const visit = (node) => {
-    if (ts.isTypeReferenceNode(node) || ts.isExpressionWithTypeArguments(node)) {
-      const at = ts.isTypeReferenceNode(node) ? node.typeName : node.expression;
+    // Every way a declaration names another one: `T`, `extends T`, `import('./x.js').T` (tsc writes it for
+    // an inferred type it can't name in scope) and `typeof x`.
+    const at = ts.isTypeReferenceNode(node)
+      ? node.typeName
+      : ts.isExpressionWithTypeArguments(node)
+        ? node.expression
+        : ts.isImportTypeNode(node)
+          ? node.qualifier
+          : ts.isTypeQueryNode(node)
+            ? node.exprName
+            : undefined;
+    if (at) {
       const found = checker.getSymbolAtLocation(at);
       const symbol = found && resolve(found);
       const declarations = symbol?.declarations?.filter(isKit) ?? [];

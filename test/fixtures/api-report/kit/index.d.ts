@@ -30,3 +30,8 @@ interface Leaf {
 interface Base {
     id: string;
 }
+export declare const made: import('./made.js').Made;
+declare const seed: {
+    n: number;
+};
+export declare const copy: typeof seed;

@@ -14,6 +14,12 @@ function renamed<T>(value: T): T;
 class Box { value: Hidden; constructor(value: Hidden); }
 ```
 
+## `copy` (const)
+
+```ts
+const copy: typeof seed;
+```
+
 ## `default` (default)
 
 ```ts
@@ -31,6 +37,12 @@ function greet(name: string, loud: boolean): string;
 
 ```ts
 const LIMIT: number;
+```
+
+## `made` (const)
+
+```ts
+const made: import('./made.js').Made;
 ```
 
 ## `Mode` (type)
@@ -63,6 +75,18 @@ interface Hidden { id: number; }
 
 ```ts
 interface Leaf { parent: Tree; }
+```
+
+### `Made` (interface)
+
+```ts
+interface Made { x: number; }
+```
+
+### `seed` (const)
+
+```ts
+const seed: { n: number; };
 ```
 
 ### `Tree` (interface)
