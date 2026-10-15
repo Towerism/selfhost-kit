@@ -67,6 +67,8 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
+      # The committed API report (api/) must match this build: a changed export shows in the PR diff.
+      - run: pnpm api:check
       - run: pnpm check:package
       - run: pnpm test:package
       # release.yml publishes exactly this build.

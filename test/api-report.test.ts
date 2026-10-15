@@ -1,0 +1,270 @@
+import { execFile } from 'node:child_process';
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
+import { afterEach, describe, expect, it } from 'vitest';
+import { REPORTS, buildReports, entryReport, main, workflowsReport } from '../scripts/api-report.mjs';
+
+// The report is how a changed export shows up in review (ADR-0005), so it runs the real TypeScript
+// compiler over committed .d.ts fixtures: no mocked compiler, no network, no clock.
+const fixtures = fileURLToPath(new URL('fixtures/api-report/', import.meta.url));
+const repo = fileURLToPath(new URL('../', import.meta.url));
+const script = join(repo, 'scripts/api-report.mjs');
+const run = promisify(execFile);
+
+const fixtureReport = (root: string) =>
+  entryReport({ root, dts: 'kit/index.d.ts', title: '@towerism/selfhost-kit/fixture' });
+
+let temps: string[] = [];
+async function temp(): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), 'api-report-'));
+  temps.push(dir);
+  return dir;
+}
+afterEach(async () => {
+  await Promise.all(temps.map((dir) => rm(dir, { recursive: true, force: true })));
+  temps = [];
+});
+
+/** A minimal kit checkout: built entry points, the release-config types and the two reusable workflows. */
+async function kitRoot(): Promise<string> {
+  const root = await temp();
+  for (const report of REPORTS.filter((r) => r.kind === 'entry')) {
+    await mkdir(join(root, report.source, '..'), { recursive: true });
+    await cp(join(fixtures, 'kit'), join(root, report.source, '..'), { recursive: true });
+  }
+  await mkdir(join(root, '.github/workflows'), { recursive: true });
+  for (const name of ['app-image.yml', 'app-release.yml']) {
+    await cp(join(repo, '.github/workflows', name), join(root, '.github/workflows', name));
+  }
+  return root;
+}
+
+function io() {
+  const out = { stdout: '', stderr: '' };
+  return {
+    out,
+    streams: {
+      stdout: { write: (s: string) => (out.stdout += s) },
+      stderr: { write: (s: string) => (out.stderr += s) },
+    },
+  };
+}
+
+describe('the entry-point report', () => {
+  it('lists every export sorted by name, then the kit types they reach but do not export', async () => {
+    const expected = await readFile(join(fixtures, 'kit.expected.api.md'), 'utf8');
+    expect(fixtureReport(fixtures)).toBe(expected);
+  });
+
+  it('leaves out comments, so rewording a doc comment is not an API change', () => {
+    const report = fixtureReport(fixtures);
+    expect(report).not.toContain('doc comment');
+    expect(report).not.toContain('line comment');
+  });
+
+  it('is byte-identical from two different directories and names neither of them', async () => {
+    const [a, b] = [await temp(), await temp()];
+    await cp(fixtures, a, { recursive: true });
+    await cp(fixtures, b, { recursive: true });
+    const [first, second] = [fixtureReport(a), fixtureReport(b)];
+    expect(first).toBe(second);
+    expect(first).not.toContain(a);
+    expect(first).not.toContain(tmpdir());
+    expect(first).not.toContain('\r');
+  });
+
+  it('has no referenced section when the exports reach no unexported kit type', () => {
+    const report = entryReport({ root: fixtures, dts: 'kit/other.d.ts', title: 'x' });
+    expect(report).toContain('function renamed<T>(value: T): T;');
+    expect(report).not.toContain('Referenced');
+  });
+
+  it('refuses a missing entry point, naming it', () => {
+    expect(() => entryReport({ root: fixtures, dts: 'kit/absent.d.ts', title: 'x' })).toThrow(
+      'kit/absent.d.ts not found',
+    );
+  });
+
+  it('refuses a .d.ts with a syntax error, naming the file', () => {
+    expect(() => entryReport({ root: fixtures, dts: 'broken/syntax.d.ts', title: 'x' })).toThrow(
+      /^broken\/syntax\.d\.ts has a syntax error/,
+    );
+  });
+
+  it('refuses an export it cannot find a declaration for, rather than leaving it out', () => {
+    expect(() => entryReport({ root: fixtures, dts: 'broken/no-declaration.d.ts', title: 'x' })).toThrow(
+      'no declaration found for export "missing" in broken/no-declaration.d.ts',
+    );
+  });
+});
+
+describe('the workflows report', () => {
+  const image = `on:
+  workflow_call:
+    inputs:
+      publish: { type: boolean, default: true }
+      image-name: { type: string, required: true, description: The image }
+    outputs:
+      digest: { value: x, description: The digest }
+jobs:
+  image:
+    permissions: { packages: write, contents: read }
+`;
+  const release = `on:
+  workflow_call:
+    inputs:
+      digest: { type: string, required: true }
+jobs:
+  release: { runs-on: x }
+`;
+
+  it("lists each workflow's jobs with their permissions, its inputs and its outputs, without descriptions", () => {
+    expect(
+      workflowsReport([
+        { name: 'app-image.yml', text: image },
+        { name: 'app-release.yml', text: release },
+      ]),
+    )
+      .toBe(`<!-- Generated by pnpm api:report from .github/workflows/app-image.yml and app-release.yml. Do not edit. -->
+
+# Reusable workflows
+
+## app-image.yml
+
+### Jobs
+
+| Job | Permissions |
+| --- | ----------- |
+| \`image\` | contents: read, packages: write |
+
+### Inputs
+
+| Input | Type | Required | Default |
+| ----- | ---- | -------- | ------- |
+| \`image-name\` | string | yes | — |
+| \`publish\` | boolean | no | \`true\` |
+
+### Outputs
+
+| Output |
+| ------ |
+| \`digest\` |
+
+## app-release.yml
+
+### Jobs
+
+| Job | Permissions |
+| --- | ----------- |
+| \`release\` | inherited |
+
+### Inputs
+
+| Input | Type | Required | Default |
+| ----- | ---- | -------- | ------- |
+| \`digest\` | string | yes | — |
+
+Outputs: none
+`);
+  });
+
+  it('sorts several jobs, and says so when a workflow declares no jobs or inputs', () => {
+    const several = `on: { workflow_call: {} }\njobs:\n  zeta: {}\n  alpha: {}\n`;
+    const none = 'on: { workflow_call: {} }\n';
+    const report = workflowsReport([
+      { name: 'several.yml', text: several },
+      { name: 'none.yml', text: none },
+    ]);
+    expect(report.indexOf('| `alpha` | inherited |')).toBeLessThan(report.indexOf('| `zeta` | inherited |'));
+    const noneSection = report.slice(report.indexOf('## none.yml'));
+    expect(noneSection).toContain('| Job | Permissions |\n| --- | ----------- |\n\n### Inputs');
+    expect(noneSection).toContain('Outputs: none');
+  });
+
+  it('refuses a workflow that is not reusable', () => {
+    expect(() => workflowsReport([{ name: 'ci.yml', text: 'on: push\njobs: {}\n' }])).toThrow(
+      'ci.yml has no on.workflow_call',
+    );
+  });
+});
+
+describe('api:report and api:check', () => {
+  it('writes one report per entry point and one for the workflows', async () => {
+    const root = await kitRoot();
+    const { streams } = io();
+    expect(main([], { root, ...streams })).toBe(0);
+    expect((await readdir(join(root, 'api'))).sort()).toEqual(
+      ['core.api.md', 'nitro.api.md', 'release-config.api.md', 'testing.api.md', 'workflows.api.md'].sort(),
+    );
+    expect(await readFile(join(root, 'api/nitro.api.md'), 'utf8')).toContain(
+      '# @towerism/selfhost-kit/nitro\n',
+    );
+  });
+
+  it('passes the check when the committed reports are current', async () => {
+    const root = await kitRoot();
+    const { streams, out } = io();
+    main([], { root, ...streams });
+    expect(main(['--check'], { root, ...streams })).toBe(0);
+    expect(out.stderr).toBe('');
+  });
+
+  it('fails the check on a stale or missing report, naming each and how to fix it', async () => {
+    const root = await kitRoot();
+    const { streams, out } = io();
+    main([], { root, ...streams });
+    const core = join(root, 'api/core.api.md');
+    await writeFile(core, (await readFile(core, 'utf8')).replace('LIMIT', 'LIMITS'));
+    await rm(join(root, 'api/workflows.api.md'));
+    expect(main(['--check'], { root, ...streams })).toBe(1);
+    expect(out.stderr).toContain('api/core.api.md is out of date');
+    expect(out.stderr).toContain('api/workflows.api.md is out of date');
+    expect(out.stderr).not.toContain('api/nitro.api.md');
+    expect(out.stderr).toContain('Run: pnpm build && pnpm api:report, then commit api/');
+  });
+
+  it('says to build first when dist/ is missing, and writes nothing', async () => {
+    const root = await kitRoot();
+    await rm(join(root, 'dist'), { recursive: true });
+    const { streams, out } = io();
+    expect(main([], { root, ...streams })).toBe(1);
+    expect(out.stderr).toBe('dist/ not found: run pnpm build first\n');
+    await expect(readdir(join(root, 'api'))).rejects.toThrow();
+  });
+
+  it('writes no report at all when one entry point fails', async () => {
+    const root = await kitRoot();
+    await writeFile(join(root, 'dist/testing/index.d.ts'), 'export declare function oops(: string;\n');
+    const { streams, out } = io();
+    expect(main([], { root, ...streams })).toBe(1);
+    expect(out.stderr).toMatch(/^dist\/testing\/index\.d\.ts has a syntax error/);
+    await expect(readdir(join(root, 'api'))).rejects.toThrow();
+  });
+
+  it('lets an unexpected error through with its stack instead of reducing it to a message', async () => {
+    const root = await kitRoot();
+    await writeFile(join(root, '.github/workflows/app-image.yml'), 'on: [unclosed\n');
+    const { streams } = io();
+    expect(() => main([], { root, ...streams })).toThrow(/Flow sequence|unclosed|Missing/i);
+  });
+
+  it('returns the reports in memory without touching api/', async () => {
+    const root = await kitRoot();
+    const reports = buildReports(root);
+    expect(reports.map((r) => r.file)).toEqual(REPORTS.map((r) => r.file));
+    await expect(readdir(join(root, 'api'))).rejects.toThrow();
+  });
+
+  it('runs as a script: exit status 1 and the message on stderr', async () => {
+    const root = await kitRoot();
+    await rm(join(root, 'dist'), { recursive: true });
+    const failure = run('node', [script, '--check', '--root', root]);
+    await expect(failure).rejects.toMatchObject({
+      code: 1,
+      stderr: 'dist/ not found: run pnpm build first\n',
+    });
+  });
+});
