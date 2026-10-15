@@ -33,8 +33,8 @@ This is a one-maintainer project, so these are targets rather than guarantees.
 | Previous major                    | Security fixes only, for 90 days after the next major is released |
 | Anything older                    | No                                                                |
 
-While the package is in `0.x`, only the latest `0.x` minor receives fixes. Consumers pin an exact version,
-and Renovate proposes each bump.
+Consumers pin an exact version, and Renovate proposes each bump: patches and minors can automerge, majors
+never do.
 
 ## How a fix is released
 
