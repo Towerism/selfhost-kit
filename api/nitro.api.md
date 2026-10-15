@@ -14,18 +14,6 @@ function bodySizeLimit(options: BodySizeLimitOptions): EventHandler;
 interface BodySizeLimitOptions { maxBytes: number; prefix?: string; exempt?: readonly RegExp[]; }
 ```
 
-## `DefaultErrorHandler` (type)
-
-```ts
-type DefaultErrorHandler = (error: H3Error, event: H3Event, opts?: { silent?: boolean; json?: boolean; }) => DefaultErrorResponse | Promise<DefaultErrorResponse>;
-```
-
-## `DefaultErrorResponse` (interface)
-
-```ts
-interface DefaultErrorResponse { status: number; statusText?: string; headers: Record<string, string>; body: unknown; }
-```
-
 ## `enforceRateLimit` (function)
 
 ```ts
@@ -54,12 +42,6 @@ function jsonOnly(options?: JsonOnlyOptions): EventHandler;
 
 ```ts
 interface JsonOnlyOptions { prefix?: string; exempt?: readonly RegExp[]; }
-```
-
-## `NitroAppLike` (interface)
-
-```ts
-interface NitroAppLike { hooks: { hook(name: string, fn: (...args: never[]) => unknown): unknown; }; }
 ```
 
 ## `NitroAppPlugin` (type)
@@ -106,6 +88,18 @@ interface SecurityHeadersPluginOptions { siteUrl?: string | undefined; extraCsp?
 interface Clock { now(): number; }
 ```
 
+### `DefaultErrorHandler` (type)
+
+```ts
+type DefaultErrorHandler = (error: H3Error, event: H3Event, opts?: { silent?: boolean; json?: boolean; }) => DefaultErrorResponse | Promise<DefaultErrorResponse>;
+```
+
+### `DefaultErrorResponse` (interface)
+
+```ts
+interface DefaultErrorResponse { status: number; statusText?: string; headers: Record<string, string>; body: unknown; }
+```
+
 ### `FixedWindowLimiter` (interface)
 
 ```ts
@@ -128,6 +122,12 @@ type LogFields = Record<string, unknown> & { err?: unknown; };
 
 ```ts
 interface Logger { error(msg: string, fields?: LogFields): void; warn(msg: string, fields?: LogFields): void; info(msg: string, fields?: LogFields): void; debug(msg: string, fields?: LogFields): void; child(scope: string, bindings?: Record<string, unknown>): Logger; }
+```
+
+### `NitroAppLike` (interface)
+
+```ts
+interface NitroAppLike { hooks: { hook(name: string, fn: (...args: never[]) => unknown): unknown; }; }
 ```
 
 ### `TrustedProxies` (interface)
