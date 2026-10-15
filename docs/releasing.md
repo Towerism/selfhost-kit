@@ -31,6 +31,17 @@ Release. Nobody runs `npm publish` or pushes a `v*` tag by hand. The one excepti
    the publish, so a failed publish leaves a tag behind (see below). `fix(security): …` commits are listed
    first, under **Security**, with their `Advisory: GHSA-…` linked.
 
+## The API report
+
+`api/*.api.md` lists every export and the reusable workflows' interface ([ADR-0005](architecture/adr/0005-versioning-and-security-fixes.md)).
+CI's `pnpm api:check` fails when it doesn't match the build. After an API change, run
+`pnpm build && pnpm api:report` and commit `api/`, so the change shows in the PR's diff. When the diff
+removes or changes an existing entry, the commit is breaking and needs a `BREAKING CHANGE:` footer.
+
+The report is printed by TypeScript, so a TypeScript update can change how a declaration is written
+without changing the API. If `api:check` fails on a Renovate PR for `typescript`, regenerate `api/`, check
+that the diff is only cosmetic, and commit it to that PR.
+
 ## Credentials and permissions
 
 There is no npm token anywhere: not in repository, environment or organisation secrets, not in any

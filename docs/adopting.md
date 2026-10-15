@@ -105,10 +105,15 @@ nuxt-security nonces the HTML shell. Give it the kit's CSP, plus the app's addit
 `securityHeadersPlugin`, below):
 
 ```ts
+// shared/csp.ts: the app's CSP additions, given to both nuxt-security and the kit's plugin
+export const EXTRA_CSP = { 'img-src': ['https://cdn.discordapp.com'] };
+```
+
+```ts
 // nuxt.config.ts
 import { contentSecurityPolicy, securityHeaders } from '@towerism/selfhost-kit';
+import { EXTRA_CSP } from './shared/csp';
 
-const EXTRA_CSP = { 'img-src': ['https://cdn.discordapp.com'] };
 const permissions = securityHeaders({ httpsSite: false })['Permissions-Policy']!;
 
 export default defineNuxtConfig({
@@ -151,8 +156,14 @@ export default bodySizeLimit({ maxBytes: MAX_BODY_BYTES });
 ```ts
 // server/plugins/00.security-headers.ts: the kit's headers on every response; HSTS only for an https site
 import { securityHeadersPlugin } from '@towerism/selfhost-kit/nitro';
-export default defineNitroPlugin(securityHeadersPlugin({ siteUrl: useRuntimeConfig().public.siteUrl }));
+import { EXTRA_CSP } from '../../shared/csp';
+export default defineNitroPlugin(
+  securityHeadersPlugin({ siteUrl: useRuntimeConfig().public.siteUrl, extraCsp: EXTRA_CSP }),
+);
 ```
+
+Pass the same `EXTRA_CSP` here as in `nuxt.config.ts`. The plugin also sets the HTML shell's CSP through
+nuxt-security, so additions missing here are missing everywhere.
 
 ```ts
 // server/plugins/00.logging.ts: request ids and one log line per request (createAppLogger from server/utils)
