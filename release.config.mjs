@@ -17,8 +17,10 @@ export default {
         preset: 'conventionalcommits',
         presetConfig,
         releaseRules: [
-          // 0.x: a breaking change ships as a minor (ADR-0005). Remove this rule when cutting 1.0.0 (K5).
-          { breaking: true, release: 'minor' },
+          // A breaking change is a major (ADR-0005; it was a minor until 1.0, K5). Keep this rule, and keep it
+          // first: commit-analyzer uses its own breaking → major only when none of these rules match, so
+          // without it `feat!:` would release a minor and `refactor!:` nothing.
+          { breaking: true, release: 'major' },
           { type: 'feat', release: 'minor' },
           { type: 'fix', release: 'patch' },
           { type: 'perf', release: 'patch' },

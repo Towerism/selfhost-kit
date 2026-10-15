@@ -54,11 +54,16 @@ describe('release config', () => {
     expect(await bump(message)).toBe(release);
   });
 
+  // From 1.0 (K5) a breaking change is a major. The custom rules shadow the preset's own breaking → major
+  // (commit-analyzer falls back to its defaults only when no custom rule matches), so the rule is explicit;
+  // without it `feat!:` would release a minor and `refactor!:` nothing.
   it.each([
     'feat!: rename the vault option',
     'fix: drop the old option\n\nBREAKING CHANGE: the option is gone',
-  ])('releases a breaking change as a minor while in 0.x: %s', async (message) => {
-    expect(await bump(message)).toBe('minor');
+    'refactor!: stop exporting an internal type',
+    'ci!: rename a reusable workflow input',
+  ])('releases a breaking change as a major: %s', async (message) => {
+    expect(await bump(message)).toBe('major');
   });
 
   it.each(['docs', 'test', 'chore', 'ci', 'refactor', 'build', 'style'])(
