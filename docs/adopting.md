@@ -251,7 +251,9 @@ The image's tags (`edge`, `sha-…`, `X.Y.Z`, `X.Y`, `latest`) all name the dige
 1. **Positive-integer env vars:** `prepareRuntimeEnv` refuses a `positiveIntegerVars` value above
    9007199254740991, which the rate limiter couldn't use anyway. Its message for any refused value is now
    `NAME must be a whole number from 1 to 9007199254740991 (got "…").`, so update tests that match the old
-   `… of at least 1 …`. Accepted values are passed on trimmed.
+   `… of at least 1 …`. A value of 2^53 or more used to pass startup and fail later, when the limiter was
+   built; it now fails at startup with this message, so a test that pinned the later failure (attendance's
+   `test/server/request-limits.test.ts`) expects this message instead. Accepted values are passed on trimmed.
 2. **Peer dependencies:** `vitest`, `semantic-release`, `@semantic-release/exec` and
    `conventional-changelog-conventionalcommits` are no longer peer dependencies; only `h3` is. Keep them
    in the app's devDependencies (see [Install and pin](#install-and-pin)). Remove the `pnpm.auditConfig`
