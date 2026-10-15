@@ -33,12 +33,12 @@ describe('exports, as a consumer sees them', () => {
   it('uses the core with only its declared dependencies, and no h3 or vitest', async () => {
     const out = await consumer.node(`
       import { createRequire } from 'node:module';
-      import { createLogger, createVault, prepareRuntimeEnv, stringVault } from '@towerism/selfhost-kit';
+      import { createLogger, createRedactor, createVault, prepareRuntimeEnv, stringVault } from '@towerism/selfhost-kit';
       const require = createRequire(import.meta.url);
       const absent = ['h3', 'vitest'].filter((p) => { try { require.resolve(p); return false; } catch { return true; } });
       const vault = stringVault(createVault({ key: Buffer.alloc(32, 7).toString('base64'), label: 'consumer' }));
       const lines = [];
-      createLogger({ scope: 'consumer', format: 'json', destination: { write: (l) => lines.push(l) } })
+      createLogger({ redactor: createRedactor(), scope: 'consumer', format: 'json', destination: { write: (l) => lines.push(l) } })
         .info('hello', { token: 'secret-value' });
       const { env } = prepareRuntimeEnv({ NUXT_PUBLIC_SITE_URL: 'https://example.com' }, { secrets: [] });
       console.log(JSON.stringify({
@@ -155,6 +155,33 @@ describe('exports, as a consumer sees them', () => {
     );
     await expect(releaser.tsc(resolution)).resolves.toBeUndefined();
   });
+
+  // The Nitro-internal shapes aren't API (so a Nitro 3 can change them in 1.x), but a kit plugin and error
+  // handler still fit Nitro's own types structurally.
+  it.each(['NodeNext', 'Bundler'] as const)(
+    "keeps Nitro's internal shapes out of ./nitro's names but not out of its types, under %s",
+    async (resolution) => {
+      await writeFile(
+        join(tester.dir, 'consumer.ts'),
+        [
+          '// @ts-expect-error -- not exported',
+          "import type { NitroAppLike } from '@towerism/selfhost-kit/nitro';",
+          '// @ts-expect-error -- not exported',
+          "import type { DefaultErrorResponse } from '@towerism/selfhost-kit/nitro';",
+          '// @ts-expect-error -- not exported',
+          "import type { DefaultErrorHandler } from '@towerism/selfhost-kit/nitro';",
+          "import { jsonErrorHandler, securityHeadersPlugin } from '@towerism/selfhost-kit/nitro';",
+          'type NitroLikePlugin = (app: {',
+          '  hooks: { hook(name: string, fn: (...args: never[]) => unknown): unknown };',
+          '}) => void;',
+          "export const plugin: NitroLikePlugin = securityHeadersPlugin({ siteUrl: 'https://example.com' });",
+          'export const handler = jsonErrorHandler();',
+          'export type Unused = [NitroAppLike, DefaultErrorResponse, DefaultErrorHandler];',
+        ].join('\n'),
+      );
+      await expect(tester.tsc(resolution)).resolves.toBeUndefined();
+    },
+  );
 
   it.each(['NodeNext', 'Bundler'] as const)(
     'type-checks all three entry points under %s',

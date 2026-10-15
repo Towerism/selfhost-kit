@@ -95,7 +95,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ github.token }}
 
-      # Before the git tag, so a GitHub Release never exists without its image.
+      # Before the git tag, so a GitHub Release never exists without its image. --prefer-index=false keeps
+      # buildx (>= 0.13, as on ubuntu-24.04) from wrapping an image manifest in a new index, and each tag is
+      # then checked to name exactly the digest the image job tested.
       - name: Tag the image X.Y.Z, X.Y, latest
         if: steps.next.outputs.version != '' && steps.head.outputs.current == 'true'
         env:
@@ -107,12 +109,20 @@ jobs:
             echo "::error::The image job published no digest; refusing to release $VERSION."
             exit 1
           fi
-          docker buildx imagetools create \
-            --tag "$IMAGE_NAME:$VERSION" \
-            --tag "$IMAGE_NAME:${VERSION%.*}" \
-            --tag "$IMAGE_NAME:latest" \
+          tags=("$IMAGE_NAME:$VERSION" "$IMAGE_NAME:${VERSION%.*}" "$IMAGE_NAME:latest")
+          docker buildx imagetools create --prefer-index=false \
+            --tag "${tags[0]}" --tag "${tags[1]}" --tag "${tags[2]}" \
             "$IMAGE_NAME@$DIGEST"
-          docker buildx imagetools inspect "$IMAGE_NAME:$VERSION"
+          for tag in "${tags[@]}"; do
+            manifest="$(docker buildx imagetools inspect "$tag" --format '{{json .Manifest}}')"
+            # The descriptor's own digest is the top-level one; an index lists its entries' digests deeper in.
+            found="$(printf '%s\n' "$manifest" | sed -n 's/^  "digest": "\(sha256:[0-9a-f]\{64\}\)",\{0,1\}$/\1/p')"
+            if [ "$found" != "$DIGEST" ]; then
+              echo "::error::$tag names ${found:-no digest}, not the tested $DIGEST. The git tag and Release were not created, but $VERSION, ${VERSION%.*} and latest were already moved: re-pin the previous X.Y.Z on Unraid until this is fixed."
+              exit 1
+            fi
+            echo "$tag names $DIGEST."
+          done
 
       - name: Git tag and GitHub Release
         if: steps.next.outputs.version != '' && steps.head.outputs.current == 'true'

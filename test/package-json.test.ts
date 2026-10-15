@@ -37,20 +37,12 @@ describe('package.json', () => {
     for (const range of Object.values(dependencies)) expect(range).toMatch(/^\^[1-9]\d*\.\d+\.\d+$/);
   });
 
-  it("declares h3, vitest and the release config's plugins as optional peers only", () => {
-    const peers = manifest.peerDependencies as Record<string, string>;
-    expect(Object.keys(peers).sort()).toEqual([
-      '@semantic-release/exec',
-      'conventional-changelog-conventionalcommits',
-      'h3',
-      'semantic-release',
-      'vitest',
-    ]);
-    expect(peers.h3).toBe('^1.15');
-    for (const name of Object.keys(peers)) {
-      expect((manifest.peerDependenciesMeta as Record<string, unknown>)[name]).toEqual({ optional: true });
-    }
-    expect(Object.keys(manifest.peerDependenciesMeta as object).sort()).toEqual(Object.keys(peers).sort());
+  // #24: an app records every peer the kit declares as the kit's optionalDependencies, so a dev tool declared
+  // here (vitest, semantic-release) put its advisories in the app's `pnpm audit --prod`. Only h3 stays: the
+  // app has it at runtime through Nitro. /testing and /release-config resolve the app's own devDependencies.
+  it('declares h3 as its only peer, optional', () => {
+    expect(manifest.peerDependencies).toEqual({ h3: '^1.15' });
+    expect(manifest.peerDependenciesMeta).toEqual({ h3: { optional: true } });
   });
 
   it('exports the three entry points, the release config, the Docker assets and package.json, types first', () => {

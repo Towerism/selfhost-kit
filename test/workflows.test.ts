@@ -139,6 +139,8 @@ describe('ci.yml', () => {
       'pnpm typecheck',
       'pnpm test',
       'pnpm build',
+      // Reads the build, so right after it; a stale API report blocks the release like a red test.
+      'pnpm api:check',
       'pnpm check:package',
       'pnpm test:package',
       'actions/upload-artifact',

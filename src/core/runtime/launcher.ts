@@ -1,4 +1,3 @@
-import { createLogger } from '../logging/logger.js';
 import type { Logger } from '../logging/types.js';
 import { type Env, InvalidSecretError } from '../secrets/index.js';
 import { InvalidConfigError, type PreparedEnv } from './env.js';
@@ -8,8 +7,8 @@ export interface LauncherOptions {
   prepare: (env: Env) => PreparedEnv;
   /** The server entry to import once the env is in place (Nitro's `server/index.mjs`). */
   server: URL;
-  /** Default `createLogger({ scope: 'startup' })`. */
-  logger?: Logger;
+  /** The app's logger, built with its own redactor. Required: the launcher never builds one itself. */
+  logger: Logger;
 }
 
 /** The parts of `process` the launcher touches. */
@@ -23,7 +22,10 @@ export interface LauncherProcess {
  * {@link runLauncher}.
  */
 export async function launch(opts: LauncherOptions, proc: LauncherProcess = process): Promise<void> {
-  const logger = opts.logger ?? createLogger({ scope: 'startup' });
+  // Checked at runtime too, for untyped callers.
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+  if (!opts.logger) throw new TypeError("runLauncher needs a logger: pass the app's logger");
+  const { logger } = opts;
   let prepared: PreparedEnv;
   try {
     prepared = opts.prepare(proc.env);

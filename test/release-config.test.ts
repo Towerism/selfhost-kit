@@ -54,11 +54,16 @@ describe('release config', () => {
     expect(await bump(message)).toBe(release);
   });
 
+  // From 1.0 (K5) a breaking change is a major. The custom rules shadow the preset's own breaking → major
+  // (commit-analyzer falls back to its defaults only when no custom rule matches), so the rule is explicit;
+  // without it `feat!:` would release a minor and `refactor!:` nothing.
   it.each([
     'feat!: rename the vault option',
     'fix: drop the old option\n\nBREAKING CHANGE: the option is gone',
-  ])('releases a breaking change as a minor while in 0.x: %s', async (message) => {
-    expect(await bump(message)).toBe('minor');
+    'refactor!: stop exporting an internal type',
+    'ci!: rename a reusable workflow input',
+  ])('releases a breaking change as a major: %s', async (message) => {
+    expect(await bump(message)).toBe('major');
   });
 
   it.each(['docs', 'test', 'chore', 'ci', 'refactor', 'build', 'style'])(
@@ -116,6 +121,17 @@ describe('release config', () => {
   it('still lists a security fix without an advisory footer', async () => {
     const markdown = await notes(['fix(security): tighten the default']);
     expect(markdown).toMatch(/### Security[\s\S]*tighten the default/);
+  });
+
+  // A major's BREAKING CHANGES section is its migration guide (ADR-0005 rule 5). The commit's trailers come
+  // after the footer, so the parser would append them to the note.
+  it('keeps co-author trailers out of the breaking-change notes, keeping the note whole', async () => {
+    const markdown = await notes([
+      "feat(logging)!: require a redactor\n\nWhy.\n\nBREAKING CHANGE: pass the app's redactor.\nSecond line of the step.\n\nCo-Authored-By: Someone <someone@example.com>\nCo-authored-by: Other <other@example.com>",
+    ]);
+    const breaking = markdown.slice(markdown.indexOf('BREAKING CHANGES'), markdown.indexOf('### Features'));
+    expect(breaking).toContain("pass the app's redactor.\nSecond line of the step.");
+    expect(breaking).not.toMatch(/co-authored-by/i);
   });
 
   it('needs no issue or pull-request permissions from the GitHub plugin', () => {

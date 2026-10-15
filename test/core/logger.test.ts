@@ -6,9 +6,13 @@ import { memoryDestination } from '../helpers/memory-destination.js';
 
 type Options = Partial<Parameters<typeof createLogger>[0]>;
 
+/** A level or format as it arrives from env or untyped code, unchecked. */
+const raw = (value: string) => value as never;
+
 function json(opts: Options = {}) {
   const out = memoryDestination();
   const log = createLogger({
+    redactor: createRedactor(),
     scope: 'test',
     level: 'info',
     format: 'json',
@@ -21,6 +25,7 @@ function json(opts: Options = {}) {
 function pretty(opts: Options = {}, isTTY = false) {
   const out = memoryDestination(isTTY);
   const log = createLogger({
+    redactor: createRedactor(),
     scope: 'test',
     level: 'info',
     format: 'pretty',
@@ -76,13 +81,13 @@ describe('createLogger, json format', () => {
   });
 
   it('reads the level case-insensitively', () => {
-    const { log, out } = json({ level: 'DEBUG' });
+    const { log, out } = json({ level: raw('DEBUG') });
     log.debug('seen');
     expect(out.records()[0]).toMatchObject({ level: 20, msg: 'seen' });
   });
 
   it('falls back to info on an unknown level, and says so once', () => {
-    const { log, out } = json({ level: 'loud' });
+    const { log, out } = json({ level: raw('loud') });
     log.debug('hidden');
     log.info('shown');
     const records = out.records();
@@ -94,27 +99,59 @@ describe('createLogger, json format', () => {
     expect(records[1]).toMatchObject({ msg: 'shown' });
   });
 
+  it('types level and format, and still falls back on an unknown value from untyped code', () => {
+    const out = memoryDestination();
+    createLogger({
+      scope: 'test',
+      redactor: createRedactor(),
+      // @ts-expect-error -- not a LogLevel
+      level: 'verbose',
+      // @ts-expect-error -- not a LogFormat
+      format: 'xml',
+      destination: out.destination,
+    }).info('after');
+    expect(out.lines[0]).toContain('NUXT_LOG_LEVEL "verbose" is not one of');
+    expect(out.lines[1]).toContain('NUXT_LOG_FORMAT "xml" is not one of pretty, json; using pretty.');
+  });
+
   it('warns once each for an unknown level and an unknown format', () => {
     const out = memoryDestination();
-    createLogger({ scope: 'test', level: 'loud', format: 'xml', destination: out.destination }).info('after');
+    createLogger({
+      redactor: createRedactor(),
+      scope: 'test',
+      level: raw('loud'),
+      format: raw('xml'),
+      destination: out.destination,
+    }).info('after');
     expect(out.lines).toHaveLength(3);
     expect(out.lines[0]).toContain('NUXT_LOG_LEVEL "loud"');
     expect(out.lines[1]).toContain('NUXT_LOG_FORMAT "xml" is not one of pretty, json; using pretty.');
   });
 
   it('treats an empty level or format as unset, without a warning', () => {
-    const { log, out } = json({ level: '' });
+    const { log, out } = json({ level: raw('') });
     log.info('only');
     expect(out.records().map((r) => r.msg)).toEqual(['only']);
 
-    const p = pretty({ format: '' });
+    const p = pretty({ format: raw('') });
     p.log.info('only');
     expect(p.out.lines).toHaveLength(1);
   });
 
+  // Without the app's redactor a logger would hide only the base keys, so there is no default.
+  it('refuses to build without a redactor', () => {
+    const message = "createLogger needs a redactor: pass createRedactor({ extraKeys }) with the app's keys";
+    // @ts-expect-error -- the redactor is required
+    expect(() => createLogger({ scope: 'test' })).toThrow(new TypeError(message));
+    // @ts-expect-error -- and may not be undefined
+    expect(() => createLogger({ scope: 'test', redactor: undefined })).toThrow(new TypeError(message));
+    // @ts-expect-error -- untyped code may pass no options at all
+    expect(() => createLogger(undefined)).toThrow(new TypeError(message));
+  });
+
   it('writes to stdout by default, and nothing at all when silent', () => {
     expect(() => {
-      createLogger({ scope: 'test', level: 'silent' }).error('nothing');
+      createLogger({ redactor: createRedactor(), scope: 'test', level: 'silent' }).error('nothing');
     }).not.toThrow();
   });
 
@@ -238,6 +275,7 @@ describe('createLogger, json format', () => {
   it('swallows a failing destination (closed pipe) instead of crashing, and keeps trying', () => {
     let calls = 0;
     const log = createLogger({
+      redactor: createRedactor(),
       scope: 'test',
       format: 'json',
       destination: {
@@ -259,13 +297,36 @@ describe('createLogger, json format', () => {
       env: { NUXT_LOG_LEVEL: 'warn', NUXT_LOG_FORMAT: 'JSON' },
       source: `
         import { createLogger } from '${sourceUrl('src/core/logging/logger.ts')}';
-        const log = createLogger({ scope: 'env' });
+        import { createRedactor } from '${sourceUrl('src/core/logging/redact.ts')}';
+        const log = createLogger({ redactor: createRedactor(), scope: 'env' });
         log.info('hidden');
         log.warn('shown');
       `,
     });
     expect(result.code).toBe(0);
     expect(JSON.parse(result.stdout)).toMatchObject({ level: 40, scope: 'env', msg: 'shown' });
+  });
+
+  it('falls back to info with a warning on an unknown NUXT_LOG_LEVEL', async () => {
+    const result = await runModule({
+      env: { NUXT_LOG_LEVEL: 'verbose', NUXT_LOG_FORMAT: 'json' },
+      source: `
+        import { createLogger } from '${sourceUrl('src/core/logging/logger.ts')}';
+        import { createRedactor } from '${sourceUrl('src/core/logging/redact.ts')}';
+        const log = createLogger({ scope: 'env', redactor: createRedactor() });
+        log.debug('hidden');
+        log.info('shown');
+      `,
+    });
+    expect(result.code).toBe(0);
+    const records = result.stdout
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as { msg: string });
+    expect(records.map((r) => r.msg)).toEqual([
+      'NUXT_LOG_LEVEL "verbose" is not one of fatal, error, warn, info, debug, trace, silent; using info.',
+      'shown',
+    ]);
   });
 });
 
@@ -280,7 +341,12 @@ describe('createLogger, pretty format', () => {
 
   it('is the default, and prints one readable line with the fields after the message', () => {
     const out = memoryDestination();
-    const log = createLogger({ scope: 'test', level: 'info', destination: out.destination });
+    const log = createLogger({
+      redactor: createRedactor(),
+      scope: 'test',
+      level: 'info',
+      destination: out.destination,
+    });
 
     log.child('submission').warn('#12 failed', { submissionId: 12 });
 
@@ -296,7 +362,7 @@ describe('createLogger, pretty format', () => {
   });
 
   it('falls back to pretty on an unknown format, and says so', () => {
-    const { log, out } = pretty({ format: 'xml' });
+    const { log, out } = pretty({ format: raw('xml') });
     log.info('after');
     expect(out.lines).toEqual([
       '[2026-10-10 19:03:22.123] WARN: [test] NUXT_LOG_FORMAT "xml" is not one of pretty, json; using pretty.\n',
@@ -367,9 +433,10 @@ describe('createLogger, pretty format', () => {
 describe('createLogger, pretty format in a real process', () => {
   const script = `
     import { createLogger } from '${sourceUrl('src/core/logging/logger.ts')}';
+        import { createRedactor } from '${sourceUrl('src/core/logging/redact.ts')}';
     Date.now = () => Date.parse('2026-10-10T19:03:22.123Z');
     const lines = [];
-    const log = createLogger({ scope: 'tz', level: 'info', destination: { isTTY: process.env.TTY === '1', write: (l) => lines.push(l) } });
+    const log = createLogger({ redactor: createRedactor(), scope: 'tz', level: 'info', destination: { isTTY: process.env.TTY === '1', write: (l) => lines.push(l) } });
     log.info('x');
     process.stdout.write(JSON.stringify(lines));
   `;

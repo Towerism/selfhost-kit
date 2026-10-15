@@ -6,7 +6,7 @@
  */
 import pino from 'pino';
 import { prettyFactory } from 'pino-pretty';
-import { type Redactor, createRedactor } from './redact.js';
+import type { Redactor } from './redact.js';
 import type { LogFields, Logger } from './types.js';
 
 export { type LogFields, type Logger, silentLogger } from './types.js';
@@ -22,12 +22,12 @@ export interface LogDestination {
 
 export interface CreateLoggerOptions {
   scope: string;
-  /** Default `createRedactor()`: the base keys only. Pass the app's redactor with its extra keys. */
-  redactor?: Redactor;
-  /** Raw value; defaults to `NUXT_LOG_LEVEL`. Unknown → `info`, with a warning. */
-  level?: string;
-  /** Raw value; defaults to `NUXT_LOG_FORMAT`. Unknown → `pretty`, with a warning. */
-  format?: string;
+  /** The app's redactor, with its extra keys. Required: a default would hide only the base keys. */
+  redactor: Redactor;
+  /** Defaults to `NUXT_LOG_LEVEL` (read case-insensitively). An unknown value → `info`, with a warning. */
+  level?: LogLevel;
+  /** Defaults to `NUXT_LOG_FORMAT` (read case-insensitively). An unknown value → `pretty`, with a warning. */
+  format?: LogFormat;
   /** Called per record; its fields (the request id) are merged in. */
   context?: () => Record<string, unknown> | undefined;
   destination?: LogDestination;
@@ -47,6 +47,14 @@ const HIDDEN_HTTP = new Set([...HIDDEN, 'method', 'path', 'status', 'durationMs'
  *   indented by 4 spaces. These line formats are public API (ADR-0005).
  */
 export function createLogger(options: CreateLoggerOptions): Logger {
+  // Checked at runtime too: an untyped caller must not silently get a logger that hides only the base keys.
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+  if (!options?.redactor) {
+    throw new TypeError(
+      "createLogger needs a redactor: pass createRedactor({ extraKeys }) with the app's keys",
+    );
+  }
+  const { redactor } = options;
   const warnings: string[] = [];
   const level = pick(LEVELS, 'info', options.level ?? process.env.NUXT_LOG_LEVEL, 'NUXT_LOG_LEVEL', warnings);
   const format = pick(
@@ -57,7 +65,6 @@ export function createLogger(options: CreateLoggerOptions): Logger {
     warnings,
   );
   const destination = options.destination ?? process.stdout;
-  const redactor = options.redactor ?? createRedactor();
 
   const toText = format === 'json' ? (line: string) => line : prettyLine(destination);
   const stream = {

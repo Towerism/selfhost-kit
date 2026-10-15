@@ -3,6 +3,7 @@
 // lines under 2.5 s.
 import { test } from 'vitest';
 import { createLogger } from '../src/core/logging/logger.js';
+import { createRedactor } from '../src/core/logging/redact.js';
 
 // 50 keys, 5 of them secret, nested two levels down.
 function record(i: number): Record<string, unknown> {
@@ -15,6 +16,7 @@ function record(i: number): Record<string, unknown> {
 function tenThousand(format: 'json' | 'pretty') {
   let bytes = 0;
   const log = createLogger({
+    redactor: createRedactor(),
     scope: 'bench',
     level: 'info',
     format,

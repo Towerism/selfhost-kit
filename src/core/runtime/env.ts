@@ -28,7 +28,8 @@ export function secretsDirFor(env: Env): string {
  *
  * 1. resolves each secret (env, else its file in the secrets dir, else generated) into `env[spec.env]`;
  * 2. sets `NUXT_SESSION_COOKIE_SECURE` from `NUXT_PUBLIC_SITE_URL` when it is empty or unset;
- * 3. removes blank `positiveIntegerVars` and refuses any that aren't a whole number ≥ 1;
+ * 3. removes blank `positiveIntegerVars`, trims the rest, and refuses any that aren't a whole number from 1 to
+ *    `Number.MAX_SAFE_INTEGER` (the largest `max` the rate limiter accepts);
  * 4. validates `NUXT_TRUSTED_PROXIES`;
  * 5. runs the app's own `validate(env)`.
  *
@@ -63,9 +64,12 @@ export function prepareRuntimeEnv(
   for (const name of opts.positiveIntegerVars ?? []) {
     const value = env[name]?.trim();
     if (!value) Reflect.deleteProperty(env, name);
-    else if (!/^[1-9]\d*$/.test(value)) {
-      throw new InvalidConfigError(`${name} must be a whole number of at least 1 (got "${value}").`);
-    }
+    // Capped at 2^53 - 1, so whatever startup accepts, createFixedWindowLimiter accepts too (#22).
+    else if (!/^[1-9]\d*$/.test(value) || Number(value) > Number.MAX_SAFE_INTEGER) {
+      throw new InvalidConfigError(
+        `${name} must be a whole number from 1 to ${String(Number.MAX_SAFE_INTEGER)} (got "${value}").`,
+      );
+    } else env[name] = value;
   }
 
   try {

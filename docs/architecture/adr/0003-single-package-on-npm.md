@@ -1,6 +1,6 @@
 # ADR-0003: One package with subpath exports, published to public npm with provenance
 
-- Status: Accepted (2026-10-13); amended 2026-10-13 (Node 24, below)
+- Status: Accepted (2026-10-13); amended 2026-10-13 (Node 24, below) and 2026-10-14 (dev-tool peers, below)
 - Date: 2026-10-13
 
 ## Context
@@ -55,8 +55,8 @@ Constraints:
   | ------- | -------- | ----------------- |
   | `.` | Core ([ADR-0006](0006-api-boundaries.md)) | none (depends on `pino`, `pino-pretty`) |
   | `./nitro` | h3/Nitro adapters | `h3` `^1.15` (optional peer) |
-  | `./testing` | Contract suites, KATs, fakes | `vitest` (optional peer) |
-  | `./release-config` | Shareable semantic-release config | the semantic-release plugins (optional peers) |
+  | `./testing` | Contract suites, KATs, fakes | `vitest` (optional peer; since 1.0 the app's devDependency, not a peer: see the [dev-tool peers amendment](#amendment-2026-10-14-dev-tool-peers-removed)) |
+  | `./release-config` | Shareable semantic-release config | the semantic-release plugins (optional peers; since 1.0 the app's devDependencies, not peers) |
   | `./docker/*` | Raw assets | — |
 
   It has `"sideEffects": false` and ships compiled JS plus `.d.ts` files. The build tool (tsdown or `tsc`)
@@ -93,3 +93,25 @@ Approved by the owner with the spec on issue #9.
 - **Also implemented.** The release job checks that npm is at least 11.5.1 before semantic-release runs, so
   an npm that can't publish stops the job before any tag is pushed ([docs/releasing.md](../../releasing.md)).
 - **Consequence.** An app still on Node 22 gets an `engines` warning from npm or pnpm and is unsupported.
+
+## Amendment (2026-10-14): dev-tool peers removed
+
+Approved by the owner with the K5 spec (issue #31, fixing #24).
+
+- **Context.** pnpm 10 records every peer the kit declares as the kit's `optionalDependencies` in the app's
+  lockfile, even optional ones the app only has as devDependencies. `pnpm audit --prod` then treated
+  `vitest` and `semantic-release` as production dependencies of the app. Attendance had to ignore vitest's
+  tinypool advisories (GHSA-5gmw-xhrv-c9v3, GHSA-85c8-ppgw-ccpr) to keep its audit green.
+- **Decision.** `h3` (`^1.15`, optional) is the only peer dependency. `vitest`, `semantic-release`,
+  `@semantic-release/exec` and `conventional-changelog-conventionalcommits` are no longer declared.
+  `/testing` and `/release-config` import them from the app, which has them as devDependencies. The table
+  above now reads: `./testing` needs `vitest` and `h3` in the app; `./release-config` needs the
+  semantic-release plugins in the app. It is still one package; splitting it was considered and isn't needed.
+- **Evidence.** A local-registry reproduction: 5 prod advisories through `.>@towerism/selfhost-kit>vitest`
+  before, 0 after. `/testing` ran under Vitest and `/release-config` loaded from the consumer, and
+  `publint --strict` and `attw` were clean. pnpm 11 doesn't count optional peers as prod at all.
+- **Consequences.**
+  - (−) Nothing checks the app's Vitest version against a range any more; the kit's CI tests `/testing`
+    with the Vitest major in its own lockfile, and the README says so.
+  - (−) pnpm's global virtual store and Yarn PnP can't resolve those tools from the kit, so they are
+    unsupported for `/testing` and `/release-config`. Neither app uses them.

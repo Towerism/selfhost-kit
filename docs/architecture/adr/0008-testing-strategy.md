@@ -1,6 +1,6 @@
 # ADR-0008: Testing strategy — KATs, contract suites the apps run, fake clock
 
-- Status: Accepted (2026-10-13)
+- Status: Accepted (2026-10-13); sketches corrected 2026-10-14 (K5, #31)
 - Date: 2026-10-13
 
 ## Context
@@ -68,7 +68,7 @@ test plan, with the same skills applied again there.
 
 ### Contract suites the apps run (`@towerism/selfhost-kit/testing`)
 
-- `describeVaultContract(makeVault)`: round trip, AAD binding, tamper refusal, against the vault exactly as
+- `describeVaultContract(name, makeVault)`: round trip, AAD binding, tamper refusal, against the vault exactly as
   the app constructs it.
 - `describeRedactionContract(redactor, { mustHide, mustShow })`:
   - for each key in `mustHide`, at any depth, in any case and with `_`/`-` variants, in messages
@@ -77,9 +77,11 @@ test plan, with the same skills applied again there.
   - the base list is always included in `mustHide`.
 
   Attendance passes `mustShow: ['tokenCount']`, and so on.
-- `describeJsonOnly(app)`, `describeBodySize(app, { maxBytes, exempt })` and
-  `describeSecurityHeaders(app, { httpsSite })`: the matrices below, run against the app's own wiring.
-- `checkUnraidTemplate(xml, { image, secretTargets })`:
+- `describeJsonOnly(handler, { prefix, exemptPaths })`, `describeBodySize(handler, { maxBytes, prefix,
+  exemptPaths })` and `describeSecurityHeaders(plugin, { httpsSite, extraCsp, errorHandler })`: the matrices
+  below, run against the app's own wiring. `exemptPaths` are concrete request paths the suite sends, each
+  matched by the middleware's `exempt` regexes. The exact signatures are in `api/testing.api.md`.
+- *Planned (#19), not in 1.0:* `checkUnraidTemplate(xml, { image, secretTargets })`:
   - no required field;
   - every secret target masked and *Advanced*;
   - PUID/PGID default to 99/100;

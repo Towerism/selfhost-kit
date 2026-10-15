@@ -16,12 +16,12 @@ Release. Nobody runs `npm publish` or pushes a `v*` tag by hand. The one excepti
 4. semantic-release ([`release.config.mjs`](../release.config.mjs)) reads the Conventional Commits since
    the last tag and picks the version:
 
-   | Commit                                                             | Release                                 |
-   | ------------------------------------------------------------------ | --------------------------------------- |
-   | `fix:`, `perf:`                                                    | patch                                   |
-   | `feat:`                                                            | minor                                   |
-   | breaking (`!` or `BREAKING CHANGE:`)                               | **minor** while in 0.x (major from 1.0) |
-   | `docs:`, `test:`, `chore:`, `ci:`, `refactor:`, `build:`, `style:` | none                                    |
+   | Commit                                                             | Release |
+   | ------------------------------------------------------------------ | ------- |
+   | `fix:`, `perf:`                                                    | patch   |
+   | `feat:`                                                            | minor   |
+   | breaking (`!` or `BREAKING CHANGE:`)                               | major   |
+   | `docs:`, `test:`, `chore:`, `ci:`, `refactor:`, `build:`, `style:` | none    |
 
 5. Before semantic-release runs, [`check-npm-trusted-publishing.mjs`](../scripts/check-npm-trusted-publishing.mjs)
    checks that npm is at least 11.5.1, the first npm that does the trusted-publishing OIDC exchange itself.
@@ -30,6 +30,17 @@ Release. Nobody runs `npm publish` or pushes a `v*` tag by hand. The one excepti
    `dist/` to npm with npm trusted publishing, and then creates the GitHub Release. The tag goes out before
    the publish, so a failed publish leaves a tag behind (see below). `fix(security): …` commits are listed
    first, under **Security**, with their `Advisory: GHSA-…` linked.
+
+## The API report
+
+`api/*.api.md` lists every export and the reusable workflows' interface ([ADR-0005](architecture/adr/0005-versioning-and-security-fixes.md)).
+CI's `pnpm api:check` fails when it doesn't match the build. After an API change, run
+`pnpm build && pnpm api:report` and commit `api/`, so the change shows in the PR's diff. When the diff
+removes or changes an existing entry, the commit is breaking and needs a `BREAKING CHANGE:` footer.
+
+The report is printed by TypeScript, so a TypeScript update can change how a declaration is written
+without changing the API. If `api:check` fails on a Renovate PR for `typescript`, regenerate `api/`, check
+that the diff is only cosmetic, and commit it to that PR.
 
 ## Credentials and permissions
 

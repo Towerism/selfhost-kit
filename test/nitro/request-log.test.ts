@@ -1,6 +1,7 @@
 import { createError, defineEventHandler } from 'h3';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createLogger } from '../../src/core/logging/logger.js';
+import { createRedactor } from '../../src/core/logging/redact.js';
 import { jsonErrorHandler } from '../../src/nitro/error.js';
 import { requestLogPlugin } from '../../src/nitro/plugins.js';
 import { fakeClock, type FakeClock } from '../../src/testing/clock.js';
@@ -21,7 +22,13 @@ let app: H3TestApp;
 beforeEach(() => {
   clock = fakeClock(1_000);
   log = memoryDestination();
-  const logger = createLogger({ scope: 'app', level: 'debug', format: 'json', destination: log.destination });
+  const logger = createLogger({
+    redactor: createRedactor(),
+    scope: 'app',
+    level: 'debug',
+    format: 'json',
+    destination: log.destination,
+  });
   app = h3TestApp({
     plugins: [requestLogPlugin({ logger, clock })],
     routes: {
@@ -106,7 +113,12 @@ describe('the request log', () => {
 describe('the default clock', () => {
   it('times requests with a clock that never goes backwards', async () => {
     const own = memoryDestination();
-    const logger = createLogger({ scope: 'app', format: 'json', destination: own.destination });
+    const logger = createLogger({
+      redactor: createRedactor(),
+      scope: 'app',
+      format: 'json',
+      destination: own.destination,
+    });
     const plain = h3TestApp({
       plugins: [requestLogPlugin({ logger })],
       routes: { '/': defineEventHandler(() => 'ok') },

@@ -234,8 +234,9 @@ SECURITY.md                 how to report a vulnerability (private advisory); su
 
 ## 5. API sketches
 
-Signatures are illustrative. Each issue's spec fixes the exact API. All core functions take their inputs
-as arguments and never read `process.env` themselves, except where a default is documented
+The authoritative signatures are in [`api/*.api.md`](../../api), generated from the build by
+`pnpm api:report` and checked in CI. The sketches below match 1.0, abbreviated. All core functions take
+their inputs as arguments and never read `process.env` themselves, except where a default is documented
 (`createLogger` reads `NUXT_LOG_LEVEL` and `NUXT_LOG_FORMAT`, as attendance does today).
 
 ### 5.1 Vault (`@towerism/selfhost-kit`)
@@ -280,13 +281,14 @@ export function resolveSecret(spec: SecretSpec, o: { env: Env; dir: string }):
 
 export function prepareRuntimeEnv(input: Env, o: {
   secrets: SecretSpec[];
-  positiveIntegerVars?: string[];      // blank → removed; otherwise must be a whole number ≥ 1
+  positiveIntegerVars?: string[];      // blank → removed; otherwise trimmed, a whole number 1 … 9007199254740991
   validate?: (env: Env) => void;       // app's own checks; throw InvalidConfigError
 }): { env: Env; log: string[] };
 // Also: derives NUXT_SESSION_COOKIE_SECURE from NUXT_PUBLIC_SITE_URL unless set; validates NUXT_TRUSTED_PROXIES.
 
 /** Resolve the env, log the lines, exit 1 on InvalidSecretError/InvalidConfigError, then import the server. */
-export function runLauncher(o: { prepare: (env: Env) => { env: Env; log: string[] }; server: URL; logger?: Logger }): Promise<void>;
+export function runLauncher(o: { prepare: (env: Env) => { env: Env; log: string[] }; server: URL; logger: Logger }): Promise<void>;
+// `logger` is required (the app's, with its redactor); without one it rejects with a TypeError.
 ```
 
 An app's launcher becomes:
@@ -303,6 +305,7 @@ const SECRETS = [
 await runLauncher({
   prepare: (env) => prepareRuntimeEnv(env, { secrets: SECRETS, positiveIntegerVars: AUTH_RATE_LIMIT_VARS }),
   server: new URL('./server/index.mjs', import.meta.url),
+  logger: createAppLogger({ scope: 'startup' }),
 });
 ```
 
@@ -314,12 +317,12 @@ export const silentLogger: Logger;
 
 /** Base keys (credentials) are always hidden. `extraKeys` adds to them; nothing can remove one. */
 export function createRedactor(o?: { extraKeys?: string[] }): { redact(v: unknown): unknown; scrub(s: string): string; isSensitiveKey(k: string): boolean };
-export const BASE_SENSITIVE_KEYS: ReadonlySet<string>;   // token, accessToken, refreshToken, idToken, authorization,
+export const BASE_SENSITIVE_KEYS: ReadonlySet<string>;   // normalized (lower case, `_` and `-` removed): token, accessToken, refreshToken, idToken, authorization,
   // proxyAuthorization, cookie, setCookie, password, sessionPassword, secret, clientSecret, secretAccessKey,
   // codeVerifier, authorizationCode, and the NUXT_/LITESTREAM_ env names of kit-owned secrets
 export function secretKeyNames(specs: SecretSpec[]): string[];  // env names of app secrets, for extraKeys
 
-export function createLogger(o: { scope: string; redactor?: Redactor; level?: string; format?: string;
+export function createLogger(o: { scope: string; redactor: Redactor; level?: LogLevel; format?: LogFormat;
   context?: () => Record<string, unknown> | undefined; destination?: LogDestination }): Logger;
 export function acceptRequestId(header: string | string[] | undefined): string;
 ```
@@ -334,7 +337,8 @@ deploy guide depend on them.
 ```ts
 export function isHttpsSite(siteUrl: string | undefined): boolean;
 /** Additive only: `extra` can add sources to a directive, never remove the base policy's. */
-export function contentSecurityPolicy(o: { httpsSite: boolean; nonce?: boolean; extra?: Partial<Record<Directive, string[]>> }): CspDirectives;
+export type CspDirectives = Record<string, string[] | boolean>;
+export function contentSecurityPolicy(o: { httpsSite: boolean; nonce?: boolean; extra?: Readonly<Record<string, readonly string[]>> }): CspDirectives;
 export function securityHeaders(o: { httpsSite: boolean; csp?: CspDirectives }): Record<string, string>;
 
 export function createFixedWindowLimiter(o: { max: number; windowMs: number; capacity?: number; clock?: Clock }): FixedWindowLimiter;
@@ -357,7 +361,7 @@ export function bodySizeLimit(o: { maxBytes: number; prefix?: string; exempt?: R
 export function securityHeadersPlugin(o: { siteUrl?: string; extraCsp?: …; nuxtSecurity?: boolean }): NitroAppPlugin;
 export function requestLogPlugin(o: { logger: Logger; quietPaths?: string[] }): NitroAppPlugin;
 export function enforceRateLimit(event: H3Event, o: { limiter: FixedWindowLimiter; trusted: TrustedProxies }): void; // 429 + Retry-After
-export function jsonErrorHandler(): NitroErrorHandler;    // keeps the app's CSP on JSON errors
+export function jsonErrorHandler(): JsonErrorHandler;     // keeps the app's CSP on JSON errors
 ```
 
 Usage in an app is one line per file, for example `server/middleware/json-only.ts`:
@@ -492,7 +496,7 @@ reaches 1.0. Genie's ADR-0001 and ADR-0009 are amended so they say "shared throu
 | K2 Adapters | `/nitro` middleware, plugins, rate-limit guard, error handler; `/testing` middleware matrices | Matrices green against a real in-memory h3 app |
 | K3 Ops assets | Docker assets, `docker-assets` bin, entrypoint container tests, reusable `app-image` and `app-release` workflows, shareable release config | The entrypoint test image passes; a sample caller workflow runs |
 | K4 Attendance migration | Steps A1–A7 in attendance (attendance issues) | Each step's gate is green; no change to an existing install |
-| K5 1.0 | API frozen after the real migration; `docs/adopting.md` | Attendance fully on the kit; Genie M1 on the kit; `1.0.0` released |
+| K5 1.0 | API frozen after the real migration; `docs/adopting.md` | Attendance fully on the kit; Genie M1 on the kit; `1.0.0` released. **Delivered** (#31): the API report in `api/`, the pre-freeze breaking changes, `docs/adopting.md` |
 
 Genie's M1 can start once K1 and K2 publish 0.x (exact pin). K3 must land before Genie's image CI exists.
 
@@ -507,9 +511,9 @@ filed yet.
 | --- | ----- | ------ |
 | [0001](adr/0001-share-as-a-package.md) | Share the infrastructure as a package, not a layer, template or copy | Accepted |
 | [0002](adr/0002-scope.md) | Scope: what the kit holds, and why the job runner stays out | Accepted |
-| [0003](adr/0003-single-package-on-npm.md) | One package with subpath exports, published to public npm with provenance | Accepted (amended 2026-10-13) |
+| [0003](adr/0003-single-package-on-npm.md) | One package with subpath exports, published to public npm with provenance | Accepted (amended 2026-10-13, 2026-10-14) |
 | [0004](adr/0004-sharing-docker-and-ci.md) | Share Docker pieces as package assets and CI as reusable workflows | Accepted (amended 2026-10-13) |
-| [0005](adr/0005-versioning-and-security-fixes.md) | Semver, compatibility rules and the security-fix path | Accepted (amended 2026-10-13) |
+| [0005](adr/0005-versioning-and-security-fixes.md) | Semver, compatibility rules and the security-fix path | Accepted (amended 2026-10-13, 2026-10-14) |
 | [0006](adr/0006-api-boundaries.md) | Framework-free core, thin Nitro adapters, and the `/data` contract | Accepted |
 | [0007](adr/0007-migration.md) | Migrate attendance piece by piece behind its existing tests; Genie starts on the kit | Accepted |
-| [0008](adr/0008-testing-strategy.md) | Testing strategy: KATs, contract suites the apps run, fake clock | Accepted |
+| [0008](adr/0008-testing-strategy.md) | Testing strategy: KATs, contract suites the apps run, fake clock | Accepted (sketches corrected 2026-10-14) |

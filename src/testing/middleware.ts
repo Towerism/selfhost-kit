@@ -43,6 +43,9 @@ async function errorBody(res: Response) {
  * The JSON-only matrix (ADR-0008), run against the app's own `jsonOnly` middleware: JSON bodies pass on
  * POST/PUT/PATCH/DELETE under `prefix`, form, multipart and text bodies get 415, and safe methods, other
  * paths and `exemptPaths` pass. Call it inside a test file; it registers its own `describe`.
+ *
+ * `exemptPaths` are concrete request paths the suite sends (e.g. `/api/tdf/preview`), not patterns: each must
+ * be matched by one of the regexes the app passed to the middleware's `exempt`.
  */
 export function describeJsonOnly(
   handler: EventHandler,
@@ -101,6 +104,9 @@ export function describeJsonOnly(
  * The body-size matrix (ADR-0008), run against the app's own `bodySizeLimit` middleware: `maxBytes` passes and
  * one more byte gets 413, a malformed `Content-Length` gets 400, a chunked body with no length gets 411, and
  * safe methods, other paths and `exemptPaths` pass.
+ *
+ * `exemptPaths` are concrete request paths the suite sends, not patterns: each must be matched by one of the
+ * regexes the app passed to the middleware's `exempt`.
  */
 export function describeBodySize(
   handler: EventHandler,

@@ -10,10 +10,6 @@ export {
 } from './plugins.js';
 export { type RateLimitOptions, enforceRateLimit } from './rate-limit.js';
 export { jsonErrorHandler } from './error.js';
-export type {
-  DefaultErrorHandler,
-  DefaultErrorResponse,
-  JsonErrorHandler,
-  NitroAppLike,
-  NitroAppPlugin,
-} from './types.js';
+// NitroAppLike, DefaultErrorResponse and DefaultErrorHandler stay internal: they mirror Nitro's own shapes,
+// which a Nitro upgrade may change, so naming them would freeze them. Nitro's types fit them structurally.
+export type { JsonErrorHandler, NitroAppPlugin } from './types.js';
