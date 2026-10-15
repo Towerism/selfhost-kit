@@ -67,26 +67,10 @@
     "test:entrypoint": "docker build -f test/entrypoint/Dockerfile --target fixture -t selfhost-kit-entrypoint:test . && test/entrypoint/run.sh selfhost-kit-entrypoint:test"
   },
   "peerDependencies": {
-    "@semantic-release/exec": "^7",
-    "conventional-changelog-conventionalcommits": "^9",
-    "h3": "^1.15",
-    "semantic-release": "^24 || ^25",
-    "vitest": "^3.2 || ^4 || ^5"
+    "h3": "^1.15"
   },
   "peerDependenciesMeta": {
-    "@semantic-release/exec": {
-      "optional": true
-    },
-    "conventional-changelog-conventionalcommits": {
-      "optional": true
-    },
     "h3": {
-      "optional": true
-    },
-    "semantic-release": {
-      "optional": true
-    },
-    "vitest": {
       "optional": true
     }
   },
