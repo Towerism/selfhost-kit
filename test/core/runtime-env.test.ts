@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { InvalidConfigError, prepareRuntimeEnv, secretsDirFor } from '../../src/core/runtime/env.js';
 import { aes256Key, InvalidSecretError } from '../../src/core/secrets/index.js';
+import { createFixedWindowLimiter } from '../../src/core/security/rate-limit.js';
 import { type TempSecretsDir, existingInstallSecrets, tempSecretsDir } from '../../src/testing/secrets.js';
 import { attendanceSpecs, syntheticKey, syntheticPassword } from '../helpers/factories.js';
 
@@ -165,23 +166,43 @@ describe('prepareRuntimeEnv', () => {
   });
 
   describe('positive-integer variables', () => {
+    // 2^53 and up: Number() loses precision (or gives Infinity), and the rate limiter refuses the value.
+    const TOO_BIG = ['9007199254740992', '9'.repeat(400)];
     it.each(
-      RATE_LIMIT_VARS.flatMap((name) => ['0', '-1', 'abc', '1.5', '10x', '05'].map((value) => [name, value])),
-    )('fails startup for %s=%j, naming the variable and the value', (name, value) => {
+      RATE_LIMIT_VARS.flatMap((name) =>
+        ['0', '-1', 'abc', '1.5', '10x', '05', '007', ...TOO_BIG].map((value) => [name, value]),
+      ),
+    )('fails startup for %s=%j, naming the variable, the range and the value', (name, value) => {
       expect(() => prepare({ ...base(), [name]: value })).toThrow(InvalidConfigError);
       expect(() => prepare({ ...base(), [name]: value })).toThrow(
-        `${name} must be a whole number of at least 1 (got "${value}").`,
+        `${name} must be a whole number from 1 to 9007199254740991 (got "${value}").`,
       );
     });
 
-    it('accepts positive integers, keeping the value as given', () => {
+    it('names the trimmed value when it refuses one', () => {
+      expect(() => prepare({ ...base(), NUXT_INTEGRATION_RATE_LIMIT_MAX: ' 0 ' })).toThrow(
+        'NUXT_INTEGRATION_RATE_LIMIT_MAX must be a whole number from 1 to 9007199254740991 (got "0").',
+      );
+    });
+
+    it('accepts whole numbers from 1 to 2^53 - 1, keeping them trimmed', () => {
       const { env } = prepare({
         ...base(),
-        NUXT_AUTH_RATE_LIMIT_LOGIN_MAX: '3',
+        NUXT_AUTH_RATE_LIMIT_LOGIN_MAX: '1',
+        NUXT_AUTH_RATE_LIMIT_SETUP_MAX: '9007199254740991',
         NUXT_AUTH_RATE_LIMIT_SETUP_WINDOW_MS: ' 1000 ',
       });
-      expect(env.NUXT_AUTH_RATE_LIMIT_LOGIN_MAX).toBe('3');
-      expect(env.NUXT_AUTH_RATE_LIMIT_SETUP_WINDOW_MS).toBe(' 1000 ');
+      expect(env.NUXT_AUTH_RATE_LIMIT_LOGIN_MAX).toBe('1');
+      expect(env.NUXT_AUTH_RATE_LIMIT_SETUP_MAX).toBe('9007199254740991');
+      expect(env.NUXT_AUTH_RATE_LIMIT_SETUP_WINDOW_MS).toBe('1000');
+    });
+
+    // Startup and the limiter must agree: whatever startup accepts, the limiter builds with (#22).
+    it.each(['1', '9007199254740991'])('passes %s on to a limiter that accepts it as its max', (value) => {
+      const { env } = prepare({ ...base(), NUXT_AUTH_RATE_LIMIT_LOGIN_MAX: value });
+      expect(() =>
+        createFixedWindowLimiter({ max: Number(env.NUXT_AUTH_RATE_LIMIT_LOGIN_MAX), windowMs: 1000 }),
+      ).not.toThrow();
     });
 
     it.each([' ', ''])('treats %j as unset, so the default applies', (value) => {
