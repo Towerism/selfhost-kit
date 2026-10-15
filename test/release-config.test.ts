@@ -123,6 +123,17 @@ describe('release config', () => {
     expect(markdown).toMatch(/### Security[\s\S]*tighten the default/);
   });
 
+  // A major's BREAKING CHANGES section is its migration guide (ADR-0005 rule 5). The commit's trailers come
+  // after the footer, so the parser would append them to the note.
+  it('keeps co-author trailers out of the breaking-change notes, keeping the note whole', async () => {
+    const markdown = await notes([
+      "feat(logging)!: require a redactor\n\nWhy.\n\nBREAKING CHANGE: pass the app's redactor.\nSecond line of the step.\n\nCo-Authored-By: Someone <someone@example.com>\nCo-authored-by: Other <other@example.com>",
+    ]);
+    const breaking = markdown.slice(markdown.indexOf('BREAKING CHANGES'), markdown.indexOf('### Features'));
+    expect(breaking).toContain("pass the app's redactor.\nSecond line of the step.");
+    expect(breaking).not.toMatch(/co-authored-by/i);
+  });
+
   it('needs no issue or pull-request permissions from the GitHub plugin', () => {
     expect(pluginOptions('@semantic-release/github')).toEqual({
       successComment: false,

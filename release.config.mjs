@@ -3,6 +3,20 @@
 // The Security section and advisory links are shared with the apps' config (release-config/notes.js).
 import { presetConfig, transform } from './release-config/notes.js';
 
+// The kit's commits end with a Co-Authored-By trailer, which the parser appends to a BREAKING CHANGE note.
+// Kept out of the notes here only: the apps' shared config is unchanged.
+const TRAILERS = /(?:\n\s*Co-authored-by:[^\n]*)+\s*$/i;
+/** @type {typeof transform} */
+const kitTransform = (commit, context) => {
+  const entry = transform(commit, context);
+  if (!entry) return entry;
+  const notes = /** @type {{ text: string }[]} */ (entry.notes ?? []);
+  return {
+    ...entry,
+    notes: notes.map((note) => ({ ...note, text: note.text.replace(TRAILERS, '').trimEnd() })),
+  };
+};
+
 const noRelease = ['docs', 'test', 'chore', 'ci', 'refactor', 'build', 'style'].map((type) => ({
   type,
   release: false,
@@ -30,7 +44,7 @@ export default {
     ],
     [
       '@semantic-release/release-notes-generator',
-      { preset: 'conventionalcommits', presetConfig, writerOpts: { transform } },
+      { preset: 'conventionalcommits', presetConfig, writerOpts: { transform: kitTransform } },
     ],
     '@semantic-release/npm',
     // No comments or labels on issues and PRs, so the release job needs only `contents: write`.
