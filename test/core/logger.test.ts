@@ -145,6 +145,8 @@ describe('createLogger, json format', () => {
     expect(() => createLogger({ scope: 'test' })).toThrow(new TypeError(message));
     // @ts-expect-error -- and may not be undefined
     expect(() => createLogger({ scope: 'test', redactor: undefined })).toThrow(new TypeError(message));
+    // @ts-expect-error -- untyped code may pass no options at all
+    expect(() => createLogger(undefined)).toThrow(new TypeError(message));
   });
 
   it('writes to stdout by default, and nothing at all when silent', () => {

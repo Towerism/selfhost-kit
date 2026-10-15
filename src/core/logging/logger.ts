@@ -49,7 +49,7 @@ const HIDDEN_HTTP = new Set([...HIDDEN, 'method', 'path', 'status', 'durationMs'
 export function createLogger(options: CreateLoggerOptions): Logger {
   // Checked at runtime too: an untyped caller must not silently get a logger that hides only the base keys.
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-  if (!options.redactor) {
+  if (!options?.redactor) {
     throw new TypeError(
       "createLogger needs a redactor: pass createRedactor({ extraKeys }) with the app's keys",
     );
