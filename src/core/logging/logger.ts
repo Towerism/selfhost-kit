@@ -24,10 +24,10 @@ export interface CreateLoggerOptions {
   scope: string;
   /** The app's redactor, with its extra keys. Required: a default would hide only the base keys. */
   redactor: Redactor;
-  /** Raw value; defaults to `NUXT_LOG_LEVEL`. Unknown → `info`, with a warning. */
-  level?: string;
-  /** Raw value; defaults to `NUXT_LOG_FORMAT`. Unknown → `pretty`, with a warning. */
-  format?: string;
+  /** Defaults to `NUXT_LOG_LEVEL` (read case-insensitively). An unknown value → `info`, with a warning. */
+  level?: LogLevel;
+  /** Defaults to `NUXT_LOG_FORMAT` (read case-insensitively). An unknown value → `pretty`, with a warning. */
+  format?: LogFormat;
   /** Called per record; its fields (the request id) are merged in. */
   context?: () => Record<string, unknown> | undefined;
   destination?: LogDestination;

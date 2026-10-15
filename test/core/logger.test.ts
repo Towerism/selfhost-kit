@@ -6,6 +6,9 @@ import { memoryDestination } from '../helpers/memory-destination.js';
 
 type Options = Partial<Parameters<typeof createLogger>[0]>;
 
+/** A level or format as it arrives from env or untyped code, unchecked. */
+const raw = (value: string) => value as never;
+
 function json(opts: Options = {}) {
   const out = memoryDestination();
   const log = createLogger({
@@ -78,13 +81,13 @@ describe('createLogger, json format', () => {
   });
 
   it('reads the level case-insensitively', () => {
-    const { log, out } = json({ level: 'DEBUG' });
+    const { log, out } = json({ level: raw('DEBUG') });
     log.debug('seen');
     expect(out.records()[0]).toMatchObject({ level: 20, msg: 'seen' });
   });
 
   it('falls back to info on an unknown level, and says so once', () => {
-    const { log, out } = json({ level: 'loud' });
+    const { log, out } = json({ level: raw('loud') });
     log.debug('hidden');
     log.info('shown');
     const records = out.records();
@@ -96,13 +99,28 @@ describe('createLogger, json format', () => {
     expect(records[1]).toMatchObject({ msg: 'shown' });
   });
 
+  it('types level and format, and still falls back on an unknown value from untyped code', () => {
+    const out = memoryDestination();
+    createLogger({
+      scope: 'test',
+      redactor: createRedactor(),
+      // @ts-expect-error -- not a LogLevel
+      level: 'verbose',
+      // @ts-expect-error -- not a LogFormat
+      format: 'xml',
+      destination: out.destination,
+    }).info('after');
+    expect(out.lines[0]).toContain('NUXT_LOG_LEVEL "verbose" is not one of');
+    expect(out.lines[1]).toContain('NUXT_LOG_FORMAT "xml" is not one of pretty, json; using pretty.');
+  });
+
   it('warns once each for an unknown level and an unknown format', () => {
     const out = memoryDestination();
     createLogger({
       redactor: createRedactor(),
       scope: 'test',
-      level: 'loud',
-      format: 'xml',
+      level: raw('loud'),
+      format: raw('xml'),
       destination: out.destination,
     }).info('after');
     expect(out.lines).toHaveLength(3);
@@ -111,11 +129,11 @@ describe('createLogger, json format', () => {
   });
 
   it('treats an empty level or format as unset, without a warning', () => {
-    const { log, out } = json({ level: '' });
+    const { log, out } = json({ level: raw('') });
     log.info('only');
     expect(out.records().map((r) => r.msg)).toEqual(['only']);
 
-    const p = pretty({ format: '' });
+    const p = pretty({ format: raw('') });
     p.log.info('only');
     expect(p.out.lines).toHaveLength(1);
   });
@@ -286,6 +304,28 @@ describe('createLogger, json format', () => {
     expect(result.code).toBe(0);
     expect(JSON.parse(result.stdout)).toMatchObject({ level: 40, scope: 'env', msg: 'shown' });
   });
+
+  it('falls back to info with a warning on an unknown NUXT_LOG_LEVEL', async () => {
+    const result = await runModule({
+      env: { NUXT_LOG_LEVEL: 'verbose', NUXT_LOG_FORMAT: 'json' },
+      source: `
+        import { createLogger } from '${sourceUrl('src/core/logging/logger.ts')}';
+        import { createRedactor } from '${sourceUrl('src/core/logging/redact.ts')}';
+        const log = createLogger({ scope: 'env', redactor: createRedactor() });
+        log.debug('hidden');
+        log.info('shown');
+      `,
+    });
+    expect(result.code).toBe(0);
+    const records = result.stdout
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as { msg: string });
+    expect(records.map((r) => r.msg)).toEqual([
+      'NUXT_LOG_LEVEL "verbose" is not one of fatal, error, warn, info, debug, trace, silent; using info.',
+      'shown',
+    ]);
+  });
 });
 
 describe('createLogger, pretty format', () => {
@@ -320,7 +360,7 @@ describe('createLogger, pretty format', () => {
   });
 
   it('falls back to pretty on an unknown format, and says so', () => {
-    const { log, out } = pretty({ format: 'xml' });
+    const { log, out } = pretty({ format: raw('xml') });
     log.info('after');
     expect(out.lines).toEqual([
       '[2026-10-10 19:03:22.123] WARN: [test] NUXT_LOG_FORMAT "xml" is not one of pretty, json; using pretty.\n',

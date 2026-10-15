@@ -53,7 +53,7 @@ function createLogger(options: CreateLoggerOptions): Logger;
 ## `CreateLoggerOptions` (interface)
 
 ```ts
-interface CreateLoggerOptions { scope: string; redactor: Redactor; level?: string; format?: string; context?: () => Record<string, unknown> | undefined; destination?: LogDestination; }
+interface CreateLoggerOptions { scope: string; redactor: Redactor; level?: LogLevel; format?: LogFormat; context?: () => Record<string, unknown> | undefined; destination?: LogDestination; }
 ```
 
 ## `createRedactor` (function)
