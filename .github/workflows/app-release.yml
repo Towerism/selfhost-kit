@@ -118,7 +118,7 @@ jobs:
             # The descriptor's own digest is the top-level one; an index lists its entries' digests deeper in.
             found="$(printf '%s\n' "$manifest" | sed -n 's/^  "digest": "\(sha256:[0-9a-f]\{64\}\)",\{0,1\}$/\1/p')"
             if [ "$found" != "$DIGEST" ]; then
-              echo "::error::$tag names ${found:-no digest}, not the tested $DIGEST; the git tag and Release were not created."
+              echo "::error::$tag names ${found:-no digest}, not the tested $DIGEST. The git tag and Release were not created, but $VERSION, ${VERSION%.*} and latest were already moved: re-pin the previous X.Y.Z on Unraid until this is fixed."
               exit 1
             fi
             echo "$tag names $DIGEST."

@@ -161,6 +161,8 @@ describe('app-release.yml', () => {
       expect(error).toContain(wrong);
       expect(error).toContain(WRAPPED);
       expect(error).toContain(DIGEST);
+      // The tags were already moved: whoever is on call must know to re-pin the previous release.
+      expect(error).toContain('already moved');
     });
 
     it('fails when a tag cannot be inspected', async () => {
