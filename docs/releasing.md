@@ -103,6 +103,9 @@ The publish token must get 400: it can write, and `{}` is not a valid package. T
 401 or 403. The exit code is 0 only when both answers match. The script prints no token and follows no
 redirect.
 
+Last run on 2026-10-23, against Gitea 28.2.0: the publish token got 400 and the read token got 401. An empty
+body gets 500 instead, because the upload handler cannot parse it, which is why the probe sends `{}`.
+
 This proves the scopes and the route, not the values stored in GitHub or on Unraid. To test those values,
 leave `GITEA_SSH` unset and set `GITEA_PACKAGE_TOKEN` and `NPM_READ_TOKEN` instead.
 
