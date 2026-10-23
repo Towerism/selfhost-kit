@@ -117,7 +117,11 @@ export async function main({ env, origin = ORIGIN, stdout, stderr }) {
         continue;
       }
       if (response.status !== 201) {
-        stderr.write(`${label}: Gitea answered ${String(response.status)} to the token request: FAILED\n`);
+        const refusal = /** @type {{ message?: string }} */ (await response.json().catch(() => ({})));
+        const reason = refusal.message ? ` (${refusal.message})` : '';
+        stderr.write(
+          `${label}: Gitea answered ${String(response.status)} to the token request${reason}: FAILED\n`,
+        );
         failed = true;
         continue;
       }

@@ -182,7 +182,7 @@ describe('check-registry-tokens minting its own tokens', () => {
     body: string;
   };
 
-  async function gitea(opts: { mint?: number; del?: number; publishStatus?: number } = {}) {
+  async function gitea(opts: { mint?: number; del?: number; publishStatus?: number; message?: string } = {}) {
     const calls: Call[] = [];
     const live = new Map<string, string>();
     let next = 1;
@@ -197,7 +197,8 @@ describe('check-registry-tokens minting its own tokens', () => {
         const del = /^\/api\/v1\/users\/([^/]+)\/tokens\/(\d+)$/.exec(url);
         if (method === 'POST' && mint) {
           res.statusCode = opts.mint ?? 201;
-          if (res.statusCode !== 201) return void res.end();
+          if (res.statusCode !== 201)
+            return void res.end(opts.message === undefined ? '' : JSON.stringify({ message: opts.message }));
           const id = String(next++);
           const value = `minted-${mint[1]!}-${id}`;
           live.set(id, value);
@@ -284,6 +285,14 @@ describe('check-registry-tokens minting its own tokens', () => {
     expect(r.code).toBe(1);
     expect(r.err).toContain('publish token: Gitea answered 401 to the token request: FAILED');
     expect(r.calls.some((c) => c.method === 'PUT')).toBe(false);
+  });
+
+  it("repeats Gitea's reason when it refuses to mint, so a wrong login can be told from a blocked one", async () => {
+    const r = await run(ADMIN, { mint: 401, message: 'user does not exist [uid: 0, name: admin]' });
+    expect(r.err).toContain(
+      'publish token: Gitea answered 401 to the token request (user does not exist [uid: 0, name: admin]): FAILED',
+    );
+    expect(r.err).not.toContain('admin-password-value');
   });
 
   it('fails and names the token when a delete is refused', async () => {
