@@ -52,7 +52,7 @@
   ],
   "publishConfig": {
     "access": "public",
-    "provenance": true
+    "registry": "https://vcs.martinfrackerjr.com/api/packages/towerism/npm/"
   },
   "scripts": {
     "lint": "eslint . && prettier --check .",

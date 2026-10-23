@@ -1,4 +1,4 @@
-import { readdir, readFile } from 'node:fs/promises';
+import { access, readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
@@ -376,7 +376,7 @@ describe('release.yml', () => {
   it('publishes from the npm environment with exactly the permissions it needs', async () => {
     const job = (await load('release.yml')).jobs.release!;
     expect(job.environment).toBe('npm');
-    expect(job.permissions).toEqual({ contents: 'write', 'id-token': 'write', actions: 'read' });
+    expect(job.permissions).toEqual({ contents: 'write', actions: 'read' });
   });
 
   it('publishes the artifact CI tested instead of rebuilding', async () => {
@@ -386,14 +386,46 @@ describe('release.yml', () => {
     expect(steps.at(-1)!.run).toBe('pnpm exec semantic-release');
   });
 
-  it('checks npm can publish with OIDC right before semantic-release, which pushes the tag', async () => {
+  it('probes the publish token with a write request right before semantic-release, which pushes the tag', async () => {
     const steps = (await load('release.yml')).jobs.release!.steps as (Step & { if?: string })[];
-    const check = steps.at(-2)!;
-    expect(check.run).toBe('node scripts/check-npm-trusted-publishing.mjs');
-    expect(check.if).toBe("steps.head.outputs.current == 'true'");
-    const setupNode = steps.findIndex((s) => s.uses?.startsWith('actions/setup-node@'));
-    expect(setupNode).toBeGreaterThanOrEqual(0);
-    expect(setupNode).toBeLessThan(steps.length - 2);
+    const probe = steps.find((s) => s.name === 'Check the publish token can write')!;
+    expect(probe.if).toBe("steps.head.outputs.current == 'true'");
+    expect(probe.run).toContain('curl');
+    expect(probe.run).toContain('-X PUT');
+    expect(probe.run).toContain('https://vcs.martinfrackerjr.com/api/packages/towerism/npm/');
+    expect(steps.indexOf(probe)).toBe(steps.length - 2);
+    expect(steps.at(-1)!.run).toBe('pnpm exec semantic-release');
+  });
+
+  it('gives the publish token only to the probe and to semantic-release', async () => {
+    const steps = (await load('release.yml')).jobs.release!.steps;
+    const withToken = steps
+      .filter((s) => s.env && 'GITEA_PACKAGE_TOKEN' in s.env)
+      .map((s) => s.name ?? s.run);
+    expect(withToken).toEqual(['Check the publish token can write', 'pnpm exec semantic-release']);
+    for (const step of steps.filter((s) => s.env && 'GITEA_PACKAGE_TOKEN' in s.env)) {
+      expect(step.env!.GITEA_PACKAGE_TOKEN).toBe('${{ secrets.GITEA_PACKAGE_TOKEN }}');
+    }
+  });
+
+  it('points npm at the Gitea registry through a userconfig outside the repository, with the token by reference', async () => {
+    const steps = (await load('release.yml')).jobs.release!.steps;
+    const point = steps.find((s) => s.name === 'Point npm at the Gitea registry')!;
+    expect(point.run).toContain('$GITHUB_ENV');
+    expect(point.run).toContain('NPM_CONFIG_USERCONFIG');
+    expect(point.run).toContain(
+      '@towerism:registry=https://vcs.martinfrackerjr.com/api/packages/towerism/npm/',
+    );
+    // The token line names the variable; npm expands it at publish time, so no literal token is written.
+    expect(point.run).toContain('_authToken=${GITEA_PACKAGE_TOKEN}');
+    expect(point.run).not.toContain('${{');
+  });
+
+  it('has no trusted-publishing check left in the repository, and no OIDC permission in any workflow', async () => {
+    await expect(access(join(repoRoot, 'scripts/check-npm-trusted-publishing.mjs'))).rejects.toThrow();
+    for (const name of (await readdir(workflows)).filter((f) => f.endsWith('.yml'))) {
+      expect(await readFile(join(workflows, name), 'utf8')).not.toContain('id-token');
+    }
   });
 });
 

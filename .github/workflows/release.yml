@@ -1,7 +1,8 @@
 name: Release
 
 # Runs after CI succeeds on a push to main, and publishes the dist/ that CI built and tested.
-# This file is npm's trusted publisher for @towerism/selfhost-kit (ADR-0003): keep its name.
+# It publishes to the Gitea npm registry with GITEA_PACKAGE_TOKEN (ADR-0009). Until the CI move, this
+# copy is the only one that releases.
 on:
   workflow_run:
     workflows: [CI]
@@ -25,7 +26,6 @@ jobs:
       cancel-in-progress: false
     permissions:
       contents: write # tags and the GitHub Release
-      id-token: write # npm trusted publishing (OIDC) and provenance
       actions: read # the dist artifact of the CI run
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -63,11 +63,32 @@ jobs:
           path: dist/
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ github.token }}
-      # semantic-release pushes the tag before it publishes, so an npm that can't do OIDC (below 11.5.1)
-      # must stop the job here, not at `npm publish`.
-      - if: steps.head.outputs.current == 'true'
-        run: node scripts/check-npm-trusted-publishing.mjs
+      # npm reads this file for the publish. The token line names the variable, so the file holds no
+      # secret: npm expands ${GITEA_PACKAGE_TOKEN} from the step's environment when it publishes.
+      - name: Point npm at the Gitea registry
+        if: steps.head.outputs.current == 'true'
+        run: |
+          userconfig="$RUNNER_TEMP/npmrc"
+          {
+            echo '@towerism:registry=https://vcs.martinfrackerjr.com/api/packages/towerism/npm/'
+            echo '//vcs.martinfrackerjr.com/api/packages/towerism/npm/:_authToken=${GITEA_PACKAGE_TOKEN}'
+          } > "$userconfig"
+          echo "NPM_CONFIG_USERCONFIG=$userconfig" >> "$GITHUB_ENV"
+      # semantic-release pushes the tag before it publishes. A token the registry refuses must stop the
+      # job here, so the probe is a write request with an empty body: a write-scoped token gets 400 (the
+      # body is empty), and a read-only or unknown token gets 401 or 403. Nothing is written.
+      - name: Check the publish token can write
+        if: steps.head.outputs.current == 'true'
+        env:
+          GITEA_PACKAGE_TOKEN: ${{ secrets.GITEA_PACKAGE_TOKEN }}
+        run: |
+          code="$(curl -sS -o /dev/null -w '%{http_code}' -X PUT -H "Authorization: Bearer $GITEA_PACKAGE_TOKEN" --data-binary '' https://vcs.martinfrackerjr.com/api/packages/towerism/npm/@towerism%2fselfhost-kit)"
+          if [ "$code" != 400 ]; then
+            echo "::error title=Publish token refused::The registry answered $code to the write probe, expected 400. Nothing was tagged or published." >&2
+            exit 1
+          fi
       - if: steps.head.outputs.current == 'true'
         run: pnpm exec semantic-release
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          GITEA_PACKAGE_TOKEN: ${{ secrets.GITEA_PACKAGE_TOKEN }}

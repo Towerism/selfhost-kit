@@ -245,3 +245,37 @@ describe('app-release.yml', () => {
     });
   });
 });
+
+describe('release.yml publish token probe', () => {
+  const TOKEN = 'publish-token-value';
+  const probe = (answer: string | undefined) =>
+    runStep('release.yml', 'Check the publish token can write', {
+      env: { GITEA_PACKAGE_TOKEN: TOKEN },
+      stubs: { curl: [{ argv: ['-sS'], ...(answer === undefined ? {} : { stdout: answer }) }] },
+    });
+
+  it('passes only when the registry refuses the empty write with 400, which a write-scoped token gets', async () => {
+    const run = await probe('400');
+    expect(run.code).toBe(0);
+    expect(run.calls.map((c) => c.argv)).toEqual([
+      expect.arrayContaining(['-X', 'PUT', '--data-binary', '']),
+    ]);
+  });
+
+  it.each([
+    ['401, a token the registry does not know', '401'],
+    ['403, a token without write access', '403'],
+    ['200, which an empty write should never get', '200'],
+    ['nothing at all, when the request itself fails', undefined],
+  ])('stops the job, before any tag, on %s', async (_, answer) => {
+    const run = await probe(answer);
+    expect(run.code).not.toBe(0);
+    expect(run.stderr).toContain('::error title=Publish token refused::');
+    expect(run.stderr).toContain('Nothing was tagged or published.');
+  });
+
+  it('never prints the token', async () => {
+    const run = await probe('401');
+    expect(run.stdout + run.stderr).not.toContain(TOKEN);
+  });
+});

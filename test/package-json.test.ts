@@ -7,15 +7,18 @@ const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.
 >;
 
 describe('package.json', () => {
-  it('names the exact repository URL npm checks provenance against', () => {
+  it('names the repository it is published from', () => {
     expect(manifest.repository).toEqual({
       type: 'git',
       url: 'git+https://github.com/Towerism/selfhost-kit.git',
     });
   });
 
-  it('publishes publicly with provenance', () => {
-    expect(manifest.publishConfig).toEqual({ access: 'public', provenance: true });
+  it('publishes publicly to the Gitea npm registry, without provenance', () => {
+    expect(manifest.publishConfig).toEqual({
+      access: 'public',
+      registry: 'https://vcs.martinfrackerjr.com/api/packages/towerism/npm/',
+    });
   });
 
   it('is an ESM-only, side-effect-free package for Node 24.11+', () => {
