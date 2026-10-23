@@ -81,16 +81,25 @@ Set it up:
 
 ### Check both tokens against the registry
 
-After you create or rotate a token, run this with both tokens in your shell environment:
+After you create or rotate a token, run this with a Gitea admin account in your shell environment:
 
 ```sh
-GITEA_PACKAGE_TOKEN=... NPM_READ_TOKEN=... pnpm check:registry-tokens
+GITEA_ADMIN_USER=... GITEA_ADMIN_PASSWORD=... pnpm check:registry-tokens
 ```
 
-It sends each token one HTTP PUT request with an empty body to the package's route on the Gitea registry, so nothing
-is created. The publish token must get 400: it can write, and the empty body holds no package. The read
-token must get 401 or 403. The exit code is 0 only when both answers match. The script prints no token and
-follows no redirect. Take the tokens from your password manager and keep them out of your shell history.
+Gitea keeps only hashes, and GitHub secrets can't be read back, so the script can't fetch the stored
+tokens. It mints a short-lived one instead: `write:package` for `ci-publisher` and `read:package` for `pull`,
+created as the admin with a `Sudo` header. It sends each one an HTTP PUT request with an empty body to the
+package's route on the Gitea registry, so no package is created, and then deletes both tokens, even when a
+probe fails. If a delete fails, the script names the token and you remove it under **Settings →
+Applications**.
+
+The publish token must get 400: it can write, and the empty body holds no package. The read token must get
+401 or 403. The exit code is 0 only when both answers match. The script prints no token or password and
+follows no redirect. Take the password from your password manager and keep it out of your shell history.
+
+This proves the scopes and the route, not the values stored in GitHub or on Unraid. To test those values,
+leave `GITEA_ADMIN_PASSWORD` unset and set `GITEA_PACKAGE_TOKEN` and `NPM_READ_TOKEN` instead.
 
 ### Read token: consumers
 

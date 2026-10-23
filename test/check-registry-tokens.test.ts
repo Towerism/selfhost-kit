@@ -167,3 +167,154 @@ describe('check-registry-tokens', () => {
     expect(run.stderr).toContain('NPM_READ_TOKEN is not set');
   });
 });
+
+// With GITEA_ADMIN_PASSWORD set, the script mints one short-lived token for each user, probes with it and
+// deletes it. This fake Gitea serves the token API and the package route, and records every call.
+describe('check-registry-tokens minting its own tokens', () => {
+  const ADMIN = { GITEA_ADMIN_USER: 'admin', GITEA_ADMIN_PASSWORD: 'admin-password-value' };
+  const basic = `Basic ${Buffer.from('admin:admin-password-value').toString('base64')}`;
+
+  type Call = {
+    method: string;
+    url: string;
+    auth: string | undefined;
+    sudo: string | undefined;
+    body: string;
+  };
+
+  async function gitea(opts: { mint?: number; del?: number; publishStatus?: number } = {}) {
+    const calls: Call[] = [];
+    const live = new Map<string, string>();
+    let next = 1;
+    const server = createServer((req, res) => {
+      let body = '';
+      req.on('data', (chunk: Buffer) => (body += chunk.toString()));
+      req.on('end', () => {
+        const { method = '', url = '' } = req;
+        const sudo = req.headers.sudo as string | undefined;
+        calls.push({ method, url, auth: req.headers.authorization, sudo, body });
+        const mint = /^\/api\/v1\/users\/([^/]+)\/tokens$/.exec(url);
+        const del = /^\/api\/v1\/users\/([^/]+)\/tokens\/(\d+)$/.exec(url);
+        if (method === 'POST' && mint) {
+          res.statusCode = opts.mint ?? 201;
+          if (res.statusCode !== 201) return void res.end();
+          const id = String(next++);
+          const value = `minted-${mint[1]!}-${id}`;
+          live.set(id, value);
+          res.setHeader('content-type', 'application/json');
+          return void res.end(JSON.stringify({ id: Number(id), sha1: value }));
+        }
+        if (method === 'DELETE' && del) {
+          if (opts.del === 0) return void req.socket.destroy();
+          res.statusCode = opts.del ?? 204;
+          if (res.statusCode === 204) live.delete(del[2]!);
+          return void res.end();
+        }
+        const token = req.headers.authorization?.replace('Bearer ', '') ?? '';
+        res.statusCode = token.startsWith('minted-ci-publisher')
+          ? (opts.publishStatus ?? 400)
+          : token.startsWith('minted-pull')
+            ? 403
+            : 401;
+        res.end();
+      });
+    });
+    servers.push(server);
+    await new Promise<void>((ready) => server.listen(0, '127.0.0.1', ready));
+    const origin = `http://127.0.0.1:${String((server.address() as AddressInfo).port)}`;
+    return { origin, calls, live };
+  }
+
+  async function run(env: Record<string, string>, opts: Parameters<typeof gitea>[0] = {}) {
+    const fake = await gitea(opts);
+    const out: string[] = [];
+    const err: string[] = [];
+    const code = await main({
+      env,
+      origin: fake.origin,
+      stdout: { write: (s: string) => out.push(s) },
+      stderr: { write: (s: string) => err.push(s) },
+    });
+    return { ...fake, code, out: out.join(''), err: err.join('') };
+  }
+
+  it('mints a write:package token for ci-publisher and a read:package token for pull, probes, and deletes both', async () => {
+    const r = await run(ADMIN);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain('publish token: 400, expected 400: ok');
+    expect(r.out).toContain('read token: 403, expected 401 or 403: ok');
+    const mints = r.calls.filter((c) => c.method === 'POST');
+    expect(mints.map((c) => [c.url, c.auth, c.sudo])).toEqual([
+      ['/api/v1/users/ci-publisher/tokens', basic, 'ci-publisher'],
+      ['/api/v1/users/pull/tokens', basic, 'pull'],
+    ]);
+    expect(mints.map((c) => (JSON.parse(c.body) as { scopes: string[] }).scopes)).toEqual([
+      ['write:package'],
+      ['read:package'],
+    ]);
+    expect(r.calls.filter((c) => c.method === 'DELETE').map((c) => c.url)).toEqual([
+      '/api/v1/users/ci-publisher/tokens/1',
+      '/api/v1/users/pull/tokens/2',
+    ]);
+    expect(r.live.size).toBe(0);
+  });
+
+  it('probes with the minted tokens, not with tokens from the environment', async () => {
+    const r = await run({ ...ADMIN, GITEA_PACKAGE_TOKEN: PUBLISH, NPM_READ_TOKEN: READ });
+    const probes = r.calls.filter((c) => c.method === 'PUT').map((c) => c.auth);
+    expect(probes).toEqual(['Bearer minted-ci-publisher-1', 'Bearer minted-pull-2']);
+  });
+
+  it('deletes the minted tokens even when a probe fails', async () => {
+    const r = await run(ADMIN, { publishStatus: 403 });
+    expect(r.code).toBe(1);
+    expect(r.err).toContain('publish token: 403, expected 400: FAILED');
+    expect(r.live.size).toBe(0);
+  });
+
+  it('fails, and mints nothing else, when the admin user is not set', async () => {
+    const r = await run({ GITEA_ADMIN_PASSWORD: 'admin-password-value' });
+    expect(r.code).toBe(1);
+    expect(r.err).toContain('GITEA_ADMIN_USER is not set');
+    expect(r.calls).toHaveLength(0);
+  });
+
+  it('fails when Gitea refuses to mint a token', async () => {
+    const r = await run(ADMIN, { mint: 401 });
+    expect(r.code).toBe(1);
+    expect(r.err).toContain('publish token: Gitea answered 401 to the token request: FAILED');
+    expect(r.calls.some((c) => c.method === 'PUT')).toBe(false);
+  });
+
+  it('fails and names the token when a delete is refused', async () => {
+    const r = await run(ADMIN, { del: 500 });
+    expect(r.code).toBe(1);
+    expect(r.err).toMatch(/publish token: could not delete test token \S+ of ci-publisher.*FAILED/);
+    expect(r.err).toMatch(/read token: could not delete test token \S+ of pull.*FAILED/);
+  });
+
+  it('fails and names the token when the connection drops during the delete', async () => {
+    const r = await run(ADMIN, { del: 0 });
+    expect(r.code).toBe(1);
+    expect(r.err).toMatch(/publish token: could not delete test token \S+ of ci-publisher.*FAILED/);
+  });
+
+  it('fails when Gitea cannot be reached for the token request', async () => {
+    const err: string[] = [];
+    const code = await main({
+      env: ADMIN,
+      origin: 'http://127.0.0.1:1',
+      stdout: { write: () => true },
+      stderr: { write: (s: string) => err.push(s) },
+    });
+    expect(code).toBe(1);
+    expect(err.join('')).toContain('could not reach Gitea');
+  });
+
+  it('never prints the admin password or a minted token', async () => {
+    const r = await run(ADMIN, { publishStatus: 401 });
+    const all = r.out + r.err;
+    expect(all).not.toContain('admin-password-value');
+    expect(all).not.toMatch(/minted-/);
+  });
+});
