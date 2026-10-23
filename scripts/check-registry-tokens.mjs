@@ -10,9 +10,10 @@
 // API does not. This proves the scopes and the route, not the secret values. To test the stored values
 // instead, leave GITEA_SSH unset and set GITEA_PACKAGE_TOKEN and NPM_READ_TOKEN.
 //
-// Each token gets one PUT with an empty body to the package's route, so nothing can be created. Gitea
-// checks the token's scope before it reads the body: a token with write:package gets 400 (no package in
-// the body), and a token that can only read gets 401 or 403. The release job runs the same request for the
+// Each token gets one PUT with the body `{}` to the package's route, so nothing can be created. Gitea
+// checks the token's scope first: a token that can only read is refused with 401 or 403. A token with
+// write:package reaches the upload handler, which refuses `{}` as an invalid package with 400. An empty body
+// is no good for this, because the handler fails to parse it and answers 500, which an outage also gives. The release job runs the same request for the
 // publish token before semantic-release pushes a tag.
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -57,8 +58,8 @@ async function status(origin, token) {
   try {
     const response = await fetch(`${origin}${PROBE_PATH}`, {
       method: 'PUT',
-      headers: { authorization: `Bearer ${token}` },
-      body: '',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: '{}',
       redirect: 'manual',
     });
     return response.status;

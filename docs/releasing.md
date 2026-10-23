@@ -25,7 +25,7 @@ and create the matching `vX.Y.Z` tag and GitHub Release. Nobody runs `npm publis
 
 5. Before semantic-release runs, the job points npm at the Gitea registry with a userconfig outside the
    repository. The token line names `${GITEA_PACKAGE_TOKEN}` and holds no secret. Then the job makes one
-   write request with the publish token and an empty body. The registry answers 400 for a write-scoped
+   write request with the publish token and the body `{}`. The registry answers 400 for a write-scoped
    token. Any other answer stops the job there, before anything is tagged.
 6. semantic-release **pushes the `vX.Y.Z` tag**, publishes the downloaded `dist/` to the Gitea registry,
    and then creates the GitHub Release. The tag goes out before the publish, so a failed publish leaves a
@@ -93,13 +93,13 @@ tokens. It creates a short-lived one for each user on the VM instead: `write:pac
 authentication, which Gitea's token API does not (it refuses basic authentication for an account with a
 WebAuthn key, and for any account without a one-time code).
 
-For each token, the script sends an HTTP PUT request with an empty body to the package's route on the
+For each token, the script sends an HTTP PUT request with the body `{}` to the package's route on the
 Gitea registry, so no package is created. Then it deletes the token with one `DELETE` on the
 `access_token` table of `/var/lib/gitea/data/gitea.db`, limited to the name it created, and checks that no
 row with that name remains. It deletes even when the probe fails. If a delete fails, the script names the
 token and you remove it under **Settings → Applications** for that user.
 
-The publish token must get 400: it can write, and the empty body holds no package. The read token must get
+The publish token must get 400: it can write, and `{}` is not a valid package. The read token must get
 401 or 403. The exit code is 0 only when both answers match. The script prints no token and follows no
 redirect.
 

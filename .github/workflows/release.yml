@@ -75,14 +75,15 @@ jobs:
           } > "$userconfig"
           echo "NPM_CONFIG_USERCONFIG=$userconfig" >> "$GITHUB_ENV"
       # semantic-release pushes the tag before it publishes. A token the registry refuses must stop the
-      # job here, so the probe is a write request with an empty body: a write-scoped token gets 400 (the
-      # body is empty), and a read-only or unknown token gets 401 or 403. Nothing is written.
+      # job here, so the probe is a write request with the body {}: a write-scoped token reaches the upload
+      # handler, which refuses {} as an invalid package with 400, and a read-only or unknown token gets 401 or
+      # 403. An empty body would get 500, because the handler cannot parse it. Nothing is written.
       - name: Check the publish token can write
         if: steps.head.outputs.current == 'true'
         env:
           GITEA_PACKAGE_TOKEN: ${{ secrets.GITEA_PACKAGE_TOKEN }}
         run: |
-          code="$(curl -sS -o /dev/null -w '%{http_code}' -X PUT -H "Authorization: Bearer $GITEA_PACKAGE_TOKEN" --data-binary '' https://vcs.martinfrackerjr.com/api/packages/towerism/npm/@towerism%2fselfhost-kit)"
+          code="$(curl -sS -o /dev/null -w '%{http_code}' -X PUT -H "Authorization: Bearer $GITEA_PACKAGE_TOKEN" -H 'Content-Type: application/json' --data-binary '{}' https://vcs.martinfrackerjr.com/api/packages/towerism/npm/@towerism%2fselfhost-kit)"
           if [ "$code" != 400 ]; then
             echo "::error title=Publish token refused::The registry answered $code to the write probe, expected 400. Nothing was tagged or published." >&2
             exit 1

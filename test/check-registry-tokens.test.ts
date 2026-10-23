@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { PROBE_PATH, main } from '../scripts/check-registry-tokens.mjs';
 
 // The owner runs this check with the real tokens, so the tests run the real fetch against a local HTTP
-// server that answers like Gitea's npm route: 400 to an empty write from a write-scoped token, 401 or 403
+// server that answers like Gitea's npm route: 400 to an invalid package from a write-scoped token, 401 or 403
 // to a token that cannot write. No network, no clock, no mocked fetch.
 const PUBLISH = 'publish-token-value';
 const READ = 'read-token-value';
@@ -19,6 +19,7 @@ type Seen = {
   method: string | undefined;
   url: string | undefined;
   auth: string | undefined;
+  type: string | undefined;
   body: string;
 };
 
@@ -36,7 +37,7 @@ async function registry(answers: Record<string, number>) {
     req.on('data', (chunk: Buffer) => (body += chunk.toString()));
     req.on('end', () => {
       const auth = req.headers.authorization;
-      seen.push({ method: req.method, url: req.url, auth, body });
+      seen.push({ method: req.method, url: req.url, auth, type: req.headers['content-type'], body });
       res.statusCode = answers[auth?.replace('Bearer ', '') ?? ''] ?? 401;
       res.end();
     });
@@ -74,11 +75,14 @@ describe('check-registry-tokens', () => {
     expect(run.code).toBe(0);
   });
 
-  it('sends an empty PUT to the package route with a bearer token, so nothing can be created', async () => {
+  // Gitea's npm upload handler parses the body as JSON before it checks anything else. An empty body
+  // fails the parse with a 500 (seen on the live server, 2026-10-23); `{}` parses and is then refused as
+  // an invalid package with a 400, so nothing is created.
+  it('sends an empty JSON object by PUT to the package route with a bearer token, so nothing can be created', async () => {
     const run = await check(both, { [PUBLISH]: 400, [READ]: 403 });
-    expect(run.seen.map((s) => [s.method, s.url, s.body])).toEqual([
-      ['PUT', PROBE_PATH, ''],
-      ['PUT', PROBE_PATH, ''],
+    expect(run.seen.map((s) => [s.method, s.url, s.type, s.body])).toEqual([
+      ['PUT', PROBE_PATH, 'application/json', '{}'],
+      ['PUT', PROBE_PATH, 'application/json', '{}'],
     ]);
     expect(run.seen.map((s) => s.auth)).toEqual([`Bearer ${PUBLISH}`, `Bearer ${READ}`]);
   });

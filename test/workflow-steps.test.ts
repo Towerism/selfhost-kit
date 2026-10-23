@@ -254,18 +254,18 @@ describe('release.yml publish token probe', () => {
       stubs: { curl: [{ argv: ['-sS'], ...(answer === undefined ? {} : { stdout: answer }) }] },
     });
 
-  it('passes only when the registry refuses the empty write with 400, which a write-scoped token gets', async () => {
+  it('passes only when the registry refuses the invalid package with 400, which a write-scoped token gets', async () => {
     const run = await probe('400');
     expect(run.code).toBe(0);
     expect(run.calls.map((c) => c.argv)).toEqual([
-      expect.arrayContaining(['-X', 'PUT', '--data-binary', '']),
+      expect.arrayContaining(['-X', 'PUT', '-H', 'Content-Type: application/json', '--data-binary', '{}']),
     ]);
   });
 
   it.each([
     ['401, a token the registry does not know', '401'],
     ['403, a token without write access', '403'],
-    ['200, which an empty write should never get', '200'],
+    ['200, which an invalid package should never get', '200'],
     ['nothing at all, when the request itself fails', undefined],
   ])('stops the job, before any tag, on %s', async (_, answer) => {
     const run = await probe(answer);
