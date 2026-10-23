@@ -1,18 +1,14 @@
 // Checks the Gitea npm registry's token scopes against the real server (ADR-0009, NFR-4). The owner runs
-// it before the first release and after each rotation, with a Gitea admin account in the environment:
+// it before the first release and after each rotation:
 //
-//   GITEA_ADMIN_USER=... GITEA_ADMIN_PASSWORD=... pnpm check:registry-tokens
+//   GITEA_SSH='ssh -p 2222 root@192.168.0.39' pnpm check:registry-tokens
 //
-// An admin with two-factor authentication also sets GITEA_ADMIN_OTP_COMMAND, a shell command that prints
-// the current code (for example `oathtool --totp -b "$SECRET"`). Gitea accepts each code once, so the script
-// runs the command before each of its four admin calls and waits until the code has changed. A run takes
-// about 90 seconds.
-//
-// The script mints a short-lived token for each user (write:package for ci-publisher, read:package for
-// pull) as that admin with a Sudo header, probes with it, and deletes it. Gitea stores only hashes, so
-// the stored tokens can't be fetched; this proves the scopes and the route, not the secret values. To
-// test the stored values instead, leave GITEA_ADMIN_PASSWORD unset and set GITEA_PACKAGE_TOKEN and
-// NPM_READ_TOKEN.
+// Gitea keeps only hashes and GitHub secrets can't be read back, so the script can't fetch the stored
+// tokens. Instead it creates a short-lived token for each user on the Gitea VM (write:package for
+// ci-publisher, read:package for pull) with `gitea admin user generate-access-token`, probes with it, and
+// deletes its row from the database. That command ignores two-factor authentication, which Gitea's token
+// API does not. This proves the scopes and the route, not the secret values. To test the stored values
+// instead, leave GITEA_SSH unset and set GITEA_PACKAGE_TOKEN and NPM_READ_TOKEN.
 //
 // Each token gets one PUT with an empty body to the package's route, so nothing can be created. Gitea
 // checks the token's scope before it reads the body: a token with write:package gets 400 (no package in
@@ -26,6 +22,10 @@ import { promisify } from 'node:util';
 
 export const ORIGIN = 'https://vcs.martinfrackerjr.com';
 export const PROBE_PATH = '/api/packages/towerism/npm/@towerism%2fselfhost-kit';
+
+const AS_GITEA = 'runuser -u gitea --';
+const GITEA = `${AS_GITEA} /usr/local/bin/gitea admin user generate-access-token --config /etc/gitea/app.ini`;
+const SQLITE = `${AS_GITEA} sqlite3 -cmd '.timeout 10000' /var/lib/gitea/data/gitea.db`;
 
 const CHECKS = [
   {
@@ -67,125 +67,69 @@ async function status(origin, token) {
   }
 }
 
-const OTP_FAILED = 'GITEA_ADMIN_OTP_COMMAND gave no new code';
-
-/** Runs a shell command and returns what it printed. */
-const shell = async (/** @type {string} */ command) =>
-  (await promisify(execFile)('sh', ['-c', command])).stdout;
-
-/** @param {number} ms */
-const wait = (ms) => new Promise((done) => setTimeout(done, ms));
-
 /**
- * Returns a function that gives the next one-time code, or `undefined` when no command is set, or `null`
- * when the command fails or keeps printing the code Gitea has already accepted (a code lasts 30 seconds,
- * so it waits up to 40 seconds for a new one).
- * @param {string | undefined} command
- * @param {() => Promise<string>} run
- * @param {(ms: number) => Promise<void>} sleep
- * @returns {() => Promise<string | null | undefined>}
+ * Returns a function that runs a command on the Gitea VM and gives back what it printed. `ssh` is the
+ * program and its leading arguments, such as `ssh -p 2222 root@192.168.0.39`; the command goes last.
+ * @param {string} ssh
+ * @returns {(command: string) => Promise<string>}
  */
-function otpSource(command, run, sleep) {
-  let last = '';
-  return async () => {
-    if (!command) return undefined;
-    for (let tries = 0; tries < 40; tries++) {
-      const code = await run().then(
-        (out) => out.trim(),
-        () => '',
-      );
-      if (!code) return null;
-      if (code !== last) {
-        last = code;
-        return code;
-      }
-      await sleep(1000);
-    }
-    return null;
-  };
+function overSsh(ssh) {
+  const [program = '', ...args] = ssh.trim().split(/\s+/);
+  return async (command) => (await promisify(execFile)(program, [...args, command])).stdout;
 }
 
 /**
- * Calls Gitea's API as the admin, acting as `user`. Gitea accepts basic authentication only on its
- * token routes. Throws when Gitea can't be reached.
- * @param {string} origin
- * @param {string} admin
- * @param {string} password
+ * Creates a token for `user` on the VM. Returns its value, or `undefined` when the command fails or
+ * prints nothing.
+ * @param {(command: string) => Promise<string>} remote
  * @param {string} user
- * @param {string} method
- * @param {string} path
- * @param {string | undefined} otp
- * @param {unknown} [body]
+ * @param {string} name
+ * @param {string} scope
  */
-function api(origin, admin, password, user, method, path, otp, body) {
-  return fetch(`${origin}/api/v1/users/${user}/tokens${path}`, {
-    method,
-    headers: {
-      authorization: `Basic ${Buffer.from(`${admin}:${password}`).toString('base64')}`,
-      sudo: user,
-      ...(otp === undefined ? {} : { 'x-gitea-otp': otp }),
-      ...(body === undefined ? {} : { 'content-type': 'application/json' }),
-    },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    redirect: 'manual',
-  });
+async function create(remote, user, name, scope) {
+  const out = await remote(`${GITEA} --username ${user} --token-name ${name} --scopes ${scope} --raw`).catch(
+    () => '',
+  );
+  return out.trim() || undefined;
+}
+
+/**
+ * Deletes the token row called `name`, and reports whether the database no longer holds it.
+ * @param {(command: string) => Promise<string>} remote
+ * @param {string} name
+ */
+async function remove(remote, name) {
+  const where = `FROM access_token WHERE name='${name}'`;
+  const out = await remote(`${SQLITE} "DELETE ${where}; SELECT count(*) ${where};"`).catch(() => '');
+  return out.trim() === '0';
 }
 
 /**
  * Runs both checks, prints one line for each, and returns the exit code: 0 when every token behaves as
- * expected, 1 otherwise. Neither a token nor the admin password is printed.
+ * expected, 1 otherwise. A token is never printed. `remote` runs a command on the Gitea VM; by default it
+ * goes through the program in GITEA_SSH.
  * @param {{
  *   env: Record<string, string | undefined>,
  *   origin?: string,
  *   stdout: { write(text: string): unknown },
  *   stderr: { write(text: string): unknown },
- *   runOtp?: () => Promise<string>,
- *   sleep?: (ms: number) => Promise<void>,
+ *   remote?: (command: string) => Promise<string>,
  * }} io
  * @returns {Promise<number>}
  */
-export async function main({ env, origin = ORIGIN, stdout, stderr, runOtp, sleep = wait }) {
-  const command = env.GITEA_ADMIN_OTP_COMMAND;
-  const nextOtp = otpSource(command, runOtp ?? (() => shell(/** @type {string} */ (command))), sleep);
-  const password = env.GITEA_ADMIN_PASSWORD;
-  const admin = env.GITEA_ADMIN_USER;
-  if (password && !admin) {
-    stderr.write('GITEA_ADMIN_USER is not set: FAILED\n');
-    return 1;
-  }
+export async function main({ env, origin = ORIGIN, stdout, stderr, remote }) {
+  const run = remote ?? (env.GITEA_SSH ? overSsh(env.GITEA_SSH) : undefined);
   let failed = false;
   for (const { label, variable, user, scope, accept, expected } of CHECKS) {
+    const name = `registry-check-${randomUUID().slice(0, 8)}`;
     let token = env[variable];
-    let minted;
-    if (password && admin) {
-      const name = `registry-check-${randomUUID().slice(0, 8)}`;
-      const mintOtp = await nextOtp();
-      if (mintOtp === null) {
-        stderr.write(`${label}: ${OTP_FAILED}: FAILED\n`);
+    if (run) {
+      token = await create(run, user, name, scope);
+      if (!token) {
+        stderr.write(`${label}: could not create a test token over SSH: FAILED\n`);
         failed = true;
         continue;
       }
-      const response = await api(origin, admin, password, user, 'POST', '', mintOtp, {
-        name,
-        scopes: [scope],
-      }).catch(() => undefined);
-      if (!response) {
-        stderr.write(`${label}: could not reach Gitea at ${origin}: FAILED\n`);
-        failed = true;
-        continue;
-      }
-      if (response.status !== 201) {
-        const refusal = /** @type {{ message?: string }} */ (await response.json().catch(() => ({})));
-        const reason = refusal.message ? ` (${refusal.message})` : '';
-        stderr.write(
-          `${label}: Gitea answered ${String(response.status)} to the token request${reason}: FAILED\n`,
-        );
-        failed = true;
-        continue;
-      }
-      const made = /** @type {{ id: number, sha1: string }} */ (await response.json());
-      token = made.sha1;
-      minted = { name, id: made.id };
     }
     if (!token) {
       stderr.write(`${label}: ${variable} is not set: FAILED\n`);
@@ -202,20 +146,11 @@ export async function main({ env, origin = ORIGIN, stdout, stderr, runOtp, sleep
       stderr.write(`${label}: ${String(code)}, expected ${expected}: FAILED\n`);
       failed = true;
     }
-    if (minted && password && admin) {
-      const deleteOtp = await nextOtp();
-      const gone =
-        deleteOtp === null
-          ? undefined
-          : await api(origin, admin, password, user, 'DELETE', `/${String(minted.id)}`, deleteOtp).catch(
-              () => undefined,
-            );
-      if (gone?.status !== 204) {
-        stderr.write(
-          `${label}: could not delete test token ${minted.name} of ${user}; delete it in Gitea under Settings > Applications: FAILED\n`,
-        );
-        failed = true;
-      }
+    if (run && !(await remove(run, name))) {
+      stderr.write(
+        `${label}: could not delete test token ${name} of ${user}; delete it in Gitea under Settings > Applications: FAILED\n`,
+      );
+      failed = true;
     }
   }
   return failed ? 1 : 0;

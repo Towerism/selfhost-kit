@@ -1,6 +1,9 @@
 import { execFile } from 'node:child_process';
+import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -168,254 +171,175 @@ describe('check-registry-tokens', () => {
   });
 });
 
-// With GITEA_ADMIN_PASSWORD set, the script mints one short-lived token for each user, probes with it and
-// deletes it. This fake Gitea serves the token API and the package route, and records every call.
-describe('check-registry-tokens minting its own tokens', () => {
-  const ADMIN = { GITEA_ADMIN_USER: 'admin', GITEA_ADMIN_PASSWORD: 'admin-password-value' };
-  const basic = `Basic ${Buffer.from('admin:admin-password-value').toString('base64')}`;
+// With GITEA_SSH set, the script creates one short-lived token for each user on the Gitea VM with
+// `gitea admin user generate-access-token` (which ignores two-factor authentication), probes with it, and
+// deletes its row. The fake VM below answers those two commands and keeps the tokens that are still live.
+describe('check-registry-tokens creating its own tokens over SSH', () => {
+  const SSH = { GITEA_SSH: 'ssh -p 2222 root@vm' };
 
-  type Call = {
-    method: string;
-    url: string;
-    auth: string | undefined;
-    sudo: string | undefined;
-    otp: string | undefined;
-    body: string;
-  };
-
-  async function gitea(opts: { mint?: number; del?: number; publishStatus?: number; message?: string } = {}) {
-    const calls: Call[] = [];
+  /** A VM that answers the create and delete commands, and records every command it was sent. */
+  function vm(opts: { create?: (command: string) => string; remove?: (command: string) => string } = {}) {
+    const commands: string[] = [];
     const live = new Map<string, string>();
     let next = 1;
-    const server = createServer((req, res) => {
-      let body = '';
-      req.on('data', (chunk: Buffer) => (body += chunk.toString()));
-      req.on('end', () => {
-        const { method = '', url = '' } = req;
-        const sudo = req.headers.sudo as string | undefined;
-        calls.push({
-          method,
-          url,
-          auth: req.headers.authorization,
-          sudo,
-          otp: req.headers['x-gitea-otp'] as string | undefined,
-          body,
-        });
-        const mint = /^\/api\/v1\/users\/([^/]+)\/tokens$/.exec(url);
-        const del = /^\/api\/v1\/users\/([^/]+)\/tokens\/(\d+)$/.exec(url);
-        if (method === 'POST' && mint) {
-          res.statusCode = opts.mint ?? 201;
-          if (res.statusCode !== 201)
-            return void res.end(opts.message === undefined ? '' : JSON.stringify({ message: opts.message }));
-          const id = String(next++);
-          const value = `minted-${mint[1]!}-${id}`;
-          live.set(id, value);
-          res.setHeader('content-type', 'application/json');
-          return void res.end(JSON.stringify({ id: Number(id), sha1: value }));
-        }
-        if (method === 'DELETE' && del) {
-          if (opts.del === 0) return void req.socket.destroy();
-          res.statusCode = opts.del ?? 204;
-          if (res.statusCode === 204) live.delete(del[2]!);
-          return void res.end();
-        }
-        const token = req.headers.authorization?.replace('Bearer ', '') ?? '';
-        res.statusCode = token.startsWith('minted-ci-publisher')
-          ? (opts.publishStatus ?? 400)
-          : token.startsWith('minted-pull')
-            ? 403
-            : 401;
-        res.end();
-      });
-    });
-    servers.push(server);
-    await new Promise<void>((ready) => server.listen(0, '127.0.0.1', ready));
-    const origin = `http://127.0.0.1:${String((server.address() as AddressInfo).port)}`;
-    return { origin, calls, live };
+    const answer = (command: string): Promise<string> => {
+      commands.push(command);
+      if (command.includes('generate-access-token')) {
+        const out = opts.create?.(command);
+        if (out !== undefined) return Promise.resolve(out);
+        const user = /--username (\S+)/.exec(command)![1]!;
+        const name = /--token-name (\S+)/.exec(command)![1]!;
+        const value = `minted-${user}-${String(next++)}`;
+        live.set(name, value);
+        return Promise.resolve(`${value}\n`);
+      }
+      const name = /name='([^']+)'/.exec(command)![1]!;
+      const out = opts.remove?.(command);
+      if (out !== undefined) return Promise.resolve(out);
+      live.delete(name);
+      return Promise.resolve('0\n');
+    };
+    const remote = (command: string): Promise<string> => {
+      try {
+        return answer(command);
+      } catch (error) {
+        return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    };
+    return { remote, commands, live };
   }
 
   async function run(
     env: Record<string, string>,
-    opts: Parameters<typeof gitea>[0] = {},
-    io: { runOtp?: () => Promise<string>; sleep?: (ms: number) => Promise<void> } = {},
+    opts: { virtual?: ReturnType<typeof vm>; answers?: Record<string, number> } = {},
   ) {
-    const fake = await gitea(opts);
+    const virtual = opts.virtual ?? vm();
+    const { origin, seen } = await registry({
+      'minted-ci-publisher-1': 400,
+      'minted-pull-2': 403,
+      ...opts.answers,
+    });
     const out: string[] = [];
     const err: string[] = [];
     const code = await main({
       env,
-      origin: fake.origin,
+      origin,
+      remote: virtual.remote,
       stdout: { write: (s: string) => out.push(s) },
       stderr: { write: (s: string) => err.push(s) },
-      ...io,
     });
-    return { ...fake, code, out: out.join(''), err: err.join('') };
+    return { code, out: out.join(''), err: err.join(''), seen, ...virtual };
   }
 
-  it('mints a write:package token for ci-publisher and a read:package token for pull, probes, and deletes both', async () => {
-    const r = await run(ADMIN);
+  it('creates a write:package token for ci-publisher and a read:package token for pull, probes, and deletes both', async () => {
+    const r = await run(SSH);
     expect(r.code).toBe(0);
     expect(r.out).toContain('publish token: 400, expected 400: ok');
     expect(r.out).toContain('read token: 403, expected 401 or 403: ok');
-    const mints = r.calls.filter((c) => c.method === 'POST');
-    expect(mints.map((c) => [c.url, c.auth, c.sudo])).toEqual([
-      ['/api/v1/users/ci-publisher/tokens', basic, 'ci-publisher'],
-      ['/api/v1/users/pull/tokens', basic, 'pull'],
-    ]);
-    expect(mints.map((c) => (JSON.parse(c.body) as { scopes: string[] }).scopes)).toEqual([
-      ['write:package'],
-      ['read:package'],
-    ]);
-    expect(r.calls.filter((c) => c.method === 'DELETE').map((c) => c.url)).toEqual([
-      '/api/v1/users/ci-publisher/tokens/1',
-      '/api/v1/users/pull/tokens/2',
-    ]);
+    const creates = r.commands.filter((c) => c.includes('generate-access-token'));
+    expect(creates).toHaveLength(2);
+    expect(creates[0]).toMatch(/--username ci-publisher .*--scopes write:package --raw$/);
+    expect(creates[1]).toMatch(/--username pull .*--scopes read:package --raw$/);
+    expect(creates[0]).toMatch(
+      /^runuser -u gitea -- \/usr\/local\/bin\/gitea admin .*--config \/etc\/gitea\/app.ini /,
+    );
+    expect(r.commands.filter((c) => c.includes('DELETE FROM access_token'))).toHaveLength(2);
     expect(r.live.size).toBe(0);
   });
 
-  it('probes with the minted tokens, not with tokens from the environment', async () => {
-    const r = await run({ ...ADMIN, GITEA_PACKAGE_TOKEN: PUBLISH, NPM_READ_TOKEN: READ });
-    const probes = r.calls.filter((c) => c.method === 'PUT').map((c) => c.auth);
-    expect(probes).toEqual(['Bearer minted-ci-publisher-1', 'Bearer minted-pull-2']);
+  it('deletes each token by the name this run created, in the Gitea database, as the gitea user', async () => {
+    const r = await run(SSH);
+    const names = r.commands
+      .filter((c) => c.includes('generate-access-token'))
+      .map((c) => /--token-name (registry-check-[0-9a-f]{8})/.exec(c)![1]);
+    const deletes = r.commands.filter((c) => c.includes('DELETE FROM access_token'));
+    expect(deletes[0]).toMatch(
+      /^runuser -u gitea -- sqlite3 -cmd '\.timeout 10000' \/var\/lib\/gitea\/data\/gitea\.db /,
+    );
+    expect(deletes[0]).toContain(`DELETE FROM access_token WHERE name='${names[0]!}'`);
+    expect(deletes[1]).toContain(`DELETE FROM access_token WHERE name='${names[1]!}'`);
+    expect(names[0]).not.toBe(names[1]);
   });
 
-  it('deletes the minted tokens even when a probe fails', async () => {
-    const r = await run(ADMIN, { publishStatus: 403 });
+  it('probes with the created tokens, not with tokens from the environment', async () => {
+    const r = await run({ ...SSH, GITEA_PACKAGE_TOKEN: PUBLISH, NPM_READ_TOKEN: READ });
+    expect(r.seen.map((s) => s.auth)).toEqual(['Bearer minted-ci-publisher-1', 'Bearer minted-pull-2']);
+  });
+
+  it('deletes the created tokens even when a probe fails', async () => {
+    const r = await run(SSH, { answers: { 'minted-ci-publisher-1': 403 } });
     expect(r.code).toBe(1);
     expect(r.err).toContain('publish token: 403, expected 400: FAILED');
     expect(r.live.size).toBe(0);
   });
 
-  it('fails, and mints nothing else, when the admin user is not set', async () => {
-    const r = await run({ GITEA_ADMIN_PASSWORD: 'admin-password-value' });
+  it.each([
+    [
+      'the command fails',
+      () => {
+        throw new Error('ssh: connection refused');
+      },
+    ],
+    ['the command prints nothing', () => '  \n'],
+  ])('fails, and does not probe, when %s', async (_, create) => {
+    const r = await run(SSH, { virtual: vm({ create }) });
     expect(r.code).toBe(1);
-    expect(r.err).toContain('GITEA_ADMIN_USER is not set');
-    expect(r.calls).toHaveLength(0);
+    expect(r.err).toContain('publish token: could not create a test token over SSH: FAILED');
+    expect(r.err).toContain('read token: could not create a test token over SSH: FAILED');
+    expect(r.seen).toHaveLength(0);
   });
 
-  it('fails when Gitea refuses to mint a token', async () => {
-    const r = await run(ADMIN, { mint: 401 });
+  it.each([
+    ['the database still holds the row', () => '1\n'],
+    [
+      'the command fails',
+      () => {
+        throw new Error('database is locked');
+      },
+    ],
+  ])('names the token left behind when %s', async (_, remove) => {
+    const r = await run(SSH, { virtual: vm({ remove }) });
     expect(r.code).toBe(1);
-    expect(r.err).toContain('publish token: Gitea answered 401 to the token request: FAILED');
-    expect(r.calls.some((c) => c.method === 'PUT')).toBe(false);
-  });
-
-  it("repeats Gitea's reason when it refuses to mint, so a wrong login can be told from a blocked one", async () => {
-    const r = await run(ADMIN, { mint: 401, message: 'user does not exist [uid: 0, name: admin]' });
-    expect(r.err).toContain(
-      'publish token: Gitea answered 401 to the token request (user does not exist [uid: 0, name: admin]): FAILED',
+    expect(r.err).toMatch(
+      /publish token: could not delete test token registry-check-[0-9a-f]{8} of ci-publisher.*FAILED/,
     );
-    expect(r.err).not.toContain('admin-password-value');
+    expect(r.err).toMatch(
+      /read token: could not delete test token registry-check-[0-9a-f]{8} of pull.*FAILED/,
+    );
   });
 
-  it('fails and names the token when a delete is refused', async () => {
-    const r = await run(ADMIN, { del: 500 });
-    expect(r.code).toBe(1);
-    expect(r.err).toMatch(/publish token: could not delete test token \S+ of ci-publisher.*FAILED/);
-    expect(r.err).toMatch(/read token: could not delete test token \S+ of pull.*FAILED/);
+  it('never prints a created token', async () => {
+    const r = await run(SSH, { answers: { 'minted-ci-publisher-1': 401, 'minted-pull-2': 400 } });
+    expect(r.out + r.err).not.toContain('minted-');
   });
 
-  it('fails and names the token when the connection drops during the delete', async () => {
-    const r = await run(ADMIN, { del: 0 });
-    expect(r.code).toBe(1);
-    expect(r.err).toMatch(/publish token: could not delete test token \S+ of ci-publisher.*FAILED/);
-  });
-
-  it('fails when Gitea cannot be reached for the token request', async () => {
-    const err: string[] = [];
-    const code = await main({
-      env: ADMIN,
-      origin: 'http://127.0.0.1:1',
-      stdout: { write: () => true },
-      stderr: { write: (s: string) => err.push(s) },
-    });
-    expect(code).toBe(1);
-    expect(err.join('')).toContain('could not reach Gitea');
-  });
-
-  it('never prints the admin password or a minted token', async () => {
-    const r = await run(ADMIN, { publishStatus: 401 });
-    const all = r.out + r.err;
-    expect(all).not.toContain('admin-password-value');
-    expect(all).not.toMatch(/minted-/);
-  });
-
-  describe('with a two-factor account', () => {
-    const OTP = { ...ADMIN, GITEA_ADMIN_OTP_COMMAND: 'print-the-code' };
-    const feed = (codes: string[]) => {
-      const left = [...codes];
-      return { runOtp: () => Promise.resolve(left.shift() ?? ''), left };
-    };
-
-    it('sends no code header when no command is set', async () => {
-      const r = await run(ADMIN);
-      expect(r.calls.filter((c) => c.url.startsWith('/api/v1')).map((c) => c.otp)).toEqual([
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-      ]);
+  describe('through a real ssh program', () => {
+    let dir = '';
+    afterEach(async () => {
+      await rm(dir, { recursive: true, force: true });
     });
 
-    it('sends a new code with each of the four admin calls, waiting while the code has not changed', async () => {
-      const { runOtp } = feed(['111111', '111111', '222222', '333333', '333333', '444444']);
-      const waits: number[] = [];
-      const r = await run(OTP, {}, { runOtp, sleep: (ms) => Promise.resolve(void waits.push(ms)) });
-      expect(r.code).toBe(0);
-      expect(r.calls.filter((c) => c.url.startsWith('/api/v1')).map((c) => c.otp)).toEqual([
-        '111111',
-        '222222',
-        '333333',
-        '444444',
-      ]);
-      expect(waits).toHaveLength(2);
-    });
-
-    it('names the token left behind when the code never changes, and stops minting', async () => {
-      const r = await run(
-        OTP,
-        {},
-        { runOtp: () => Promise.resolve('111111'), sleep: () => Promise.resolve() },
+    it('runs the given program with its arguments and the remote command last', async () => {
+      dir = await mkdtemp(join(tmpdir(), 'fake-ssh-'));
+      const fake = join(dir, 'fake-ssh');
+      await writeFile(
+        fake,
+        '#!/bin/sh\ncase "$*" in\n  *generate-access-token*) echo "raw-$$-$RANDOM";;\n  *) echo 0;;\nesac\n',
       );
-      expect(r.code).toBe(1);
-      expect(r.err).toMatch(/publish token: could not delete test token \S+ of ci-publisher/);
-      expect(r.err).toContain('read token: GITEA_ADMIN_OTP_COMMAND gave no new code: FAILED');
-      expect(r.calls.filter((c) => c.method === 'POST')).toHaveLength(1);
+      await chmod(fake, 0o755);
+      const { origin } = await registry({});
+      const err: string[] = [];
+      const code = await main({
+        env: { GITEA_SSH: `${fake} -p 2222 root@vm` },
+        origin,
+        stdout: { write: () => true },
+        stderr: { write: (s: string) => err.push(s) },
+      });
+      // The registry answers 401 to the fake tokens: the publish probe fails, the read probe passes.
+      expect(code).toBe(1);
+      expect(err.join('')).toContain('publish token: 401, expected 400: FAILED');
+      expect(err.join('')).not.toContain('could not create');
+      expect(err.join('')).not.toContain('could not delete');
     });
-
-    it('fails when the command prints nothing', async () => {
-      const r = await run(OTP, {}, { runOtp: () => Promise.resolve('  \n'), sleep: () => Promise.resolve() });
-      expect(r.code).toBe(1);
-      expect(r.err).toContain('GITEA_ADMIN_OTP_COMMAND gave no new code');
-    });
-
-    it('fails when the command itself fails', async () => {
-      const r = await run(OTP, {}, { runOtp: () => Promise.reject(new Error('boom')) });
-      expect(r.code).toBe(1);
-      expect(r.err).toContain('GITEA_ADMIN_OTP_COMMAND gave no new code');
-    });
-
-    it('names the token left behind when no code is available for the delete', async () => {
-      const { runOtp } = feed(['111111']);
-      const r = await run(
-        OTP,
-        {},
-        { runOtp: () => runOtp().then((c) => c || Promise.reject(new Error('x'))) },
-      );
-      expect(r.err).toMatch(/publish token: could not delete test token \S+ of ci-publisher/);
-    });
-
-    it('never prints a code', async () => {
-      const { runOtp } = feed(['123456', '234567', '345678', '456789']);
-      const r = await run({ ...OTP }, { publishStatus: 401 }, { runOtp });
-      expect(r.out + r.err).not.toMatch(/\d{6}/);
-    });
-
-    it('runs the command through the shell by default', async () => {
-      const r = await run({ ...ADMIN, GITEA_ADMIN_OTP_COMMAND: 'date +%s' });
-      expect(r.code).toBe(0);
-      const codes = r.calls.filter((c) => c.url.startsWith('/api/v1')).map((c) => c.otp);
-      expect(new Set(codes).size).toBe(4);
-    }, 15_000);
   });
 });

@@ -81,30 +81,30 @@ Set it up:
 
 ### Check both tokens against the registry
 
-After you create or rotate a token, run this with a Gitea admin account in your shell environment:
+After you create or rotate a token, run this from a machine that can SSH to the Gitea VM as root:
 
 ```sh
-GITEA_ADMIN_USER=... GITEA_ADMIN_PASSWORD=... pnpm check:registry-tokens
+GITEA_SSH='ssh -p 2222 root@192.168.0.39' pnpm check:registry-tokens
 ```
 
 Gitea keeps only hashes, and GitHub secrets can't be read back, so the script can't fetch the stored
-tokens. It mints a short-lived one instead: `write:package` for `ci-publisher` and `read:package` for `pull`,
-created as the admin with a `Sudo` header. It sends each one an HTTP PUT request with an empty body to the
-package's route on the Gitea registry, so no package is created, and then deletes both tokens, even when a
-probe fails. If a delete fails, the script names the token and you remove it under **Settings →
-Applications**.
+tokens. It creates a short-lived one for each user on the VM instead: `write:package` for `ci-publisher` and
+`read:package` for `pull`, with `gitea admin user generate-access-token`. That command ignores two-factor
+authentication, which Gitea's token API does not (it refuses basic authentication for an account with a
+WebAuthn key, and for any account without a one-time code).
 
-If the admin account uses two-factor authentication, also set `GITEA_ADMIN_OTP_COMMAND` to a shell command
-that prints the current code, for example `oathtool --totp -b "$SECRET"`, `pass otp gitea` or
-`op item get gitea --otp`. Gitea accepts each code once, and the script makes four admin calls, so it runs
-the command before each call and waits until the code changes. A run takes about 90 seconds.
+For each token, the script sends an HTTP PUT request with an empty body to the package's route on the
+Gitea registry, so no package is created. Then it deletes the token with one `DELETE` on the
+`access_token` table of `/var/lib/gitea/data/gitea.db`, limited to the name it created, and checks that no
+row with that name remains. It deletes even when the probe fails. If a delete fails, the script names the
+token and you remove it under **Settings → Applications** for that user.
 
 The publish token must get 400: it can write, and the empty body holds no package. The read token must get
-401 or 403. The exit code is 0 only when both answers match. The script prints no token or password and
-follows no redirect. Take the password from your password manager and keep it out of your shell history.
+401 or 403. The exit code is 0 only when both answers match. The script prints no token and follows no
+redirect.
 
 This proves the scopes and the route, not the values stored in GitHub or on Unraid. To test those values,
-leave `GITEA_ADMIN_PASSWORD` unset and set `GITEA_PACKAGE_TOKEN` and `NPM_READ_TOKEN` instead.
+leave `GITEA_SSH` unset and set `GITEA_PACKAGE_TOKEN` and `NPM_READ_TOKEN` instead.
 
 ### Read token: consumers
 
