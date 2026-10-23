@@ -79,6 +79,19 @@ Set it up:
    repository secret `GITEA_PACKAGE_TOKEN` to that value.
 3. Record the creation date in the table under [Rotation](#rotation).
 
+### Check both tokens against the registry
+
+After you create or rotate a token, run this with both tokens in your shell environment:
+
+```sh
+GITEA_PACKAGE_TOKEN=... NPM_READ_TOKEN=... pnpm check:registry-tokens
+```
+
+It sends each token one HTTP PUT request with an empty body to the package's route on the Gitea registry, so nothing
+is created. The publish token must get 400: it can write, and the empty body holds no package. The read
+token must get 401 or 403. The exit code is 0 only when both answers match. The script prints no token and
+follows no redirect. Take the tokens from your password manager and keep them out of your shell history.
+
 ### Read token: consumers
 
 Each app that installs `@towerism/selfhost-kit` needs a read token. The `pull` user's token named `read`
