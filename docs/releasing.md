@@ -94,6 +94,11 @@ package's route on the Gitea registry, so no package is created, and then delete
 probe fails. If a delete fails, the script names the token and you remove it under **Settings →
 Applications**.
 
+If the admin account uses two-factor authentication, also set `GITEA_ADMIN_OTP_COMMAND` to a shell command
+that prints the current code, for example `oathtool --totp -b "$SECRET"`, `pass otp gitea` or
+`op item get gitea --otp`. Gitea accepts each code once, and the script makes four admin calls, so it runs
+the command before each call and waits until the code changes. A run takes about 90 seconds.
+
 The publish token must get 400: it can write, and the empty body holds no package. The read token must get
 401 or 403. The exit code is 0 only when both answers match. The script prints no token or password and
 follows no redirect. Take the password from your password manager and keep it out of your shell history.

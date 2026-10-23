@@ -3,6 +3,11 @@
 //
 //   GITEA_ADMIN_USER=... GITEA_ADMIN_PASSWORD=... pnpm check:registry-tokens
 //
+// An admin with two-factor authentication also sets GITEA_ADMIN_OTP_COMMAND, a shell command that prints
+// the current code (for example `oathtool --totp -b "$SECRET"`). Gitea accepts each code once, so the script
+// runs the command before each of its four admin calls and waits until the code has changed. A run takes
+// about 90 seconds.
+//
 // The script mints a short-lived token for each user (write:package for ci-publisher, read:package for
 // pull) as that admin with a Sudo header, probes with it, and deletes it. Gitea stores only hashes, so
 // the stored tokens can't be fetched; this proves the scopes and the route, not the secret values. To
@@ -13,9 +18,11 @@
 // checks the token's scope before it reads the body: a token with write:package gets 400 (no package in
 // the body), and a token that can only read gets 401 or 403. The release job runs the same request for the
 // publish token before semantic-release pushes a tag.
+import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { argv } from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 
 export const ORIGIN = 'https://vcs.martinfrackerjr.com';
 export const PROBE_PATH = '/api/packages/towerism/npm/@towerism%2fselfhost-kit';
@@ -60,6 +67,44 @@ async function status(origin, token) {
   }
 }
 
+const OTP_FAILED = 'GITEA_ADMIN_OTP_COMMAND gave no new code';
+
+/** Runs a shell command and returns what it printed. */
+const shell = async (/** @type {string} */ command) =>
+  (await promisify(execFile)('sh', ['-c', command])).stdout;
+
+/** @param {number} ms */
+const wait = (ms) => new Promise((done) => setTimeout(done, ms));
+
+/**
+ * Returns a function that gives the next one-time code, or `undefined` when no command is set, or `null`
+ * when the command fails or keeps printing the code Gitea has already accepted (a code lasts 30 seconds,
+ * so it waits up to 40 seconds for a new one).
+ * @param {string | undefined} command
+ * @param {() => Promise<string>} run
+ * @param {(ms: number) => Promise<void>} sleep
+ * @returns {() => Promise<string | null | undefined>}
+ */
+function otpSource(command, run, sleep) {
+  let last = '';
+  return async () => {
+    if (!command) return undefined;
+    for (let tries = 0; tries < 40; tries++) {
+      const code = await run().then(
+        (out) => out.trim(),
+        () => '',
+      );
+      if (!code) return null;
+      if (code !== last) {
+        last = code;
+        return code;
+      }
+      await sleep(1000);
+    }
+    return null;
+  };
+}
+
 /**
  * Calls Gitea's API as the admin, acting as `user`. Gitea accepts basic authentication only on its
  * token routes. Throws when Gitea can't be reached.
@@ -69,14 +114,16 @@ async function status(origin, token) {
  * @param {string} user
  * @param {string} method
  * @param {string} path
+ * @param {string | undefined} otp
  * @param {unknown} [body]
  */
-function api(origin, admin, password, user, method, path, body) {
+function api(origin, admin, password, user, method, path, otp, body) {
   return fetch(`${origin}/api/v1/users/${user}/tokens${path}`, {
     method,
     headers: {
       authorization: `Basic ${Buffer.from(`${admin}:${password}`).toString('base64')}`,
       sudo: user,
+      ...(otp === undefined ? {} : { 'x-gitea-otp': otp }),
       ...(body === undefined ? {} : { 'content-type': 'application/json' }),
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -92,10 +139,14 @@ function api(origin, admin, password, user, method, path, body) {
  *   origin?: string,
  *   stdout: { write(text: string): unknown },
  *   stderr: { write(text: string): unknown },
+ *   runOtp?: () => Promise<string>,
+ *   sleep?: (ms: number) => Promise<void>,
  * }} io
  * @returns {Promise<number>}
  */
-export async function main({ env, origin = ORIGIN, stdout, stderr }) {
+export async function main({ env, origin = ORIGIN, stdout, stderr, runOtp, sleep = wait }) {
+  const command = env.GITEA_ADMIN_OTP_COMMAND;
+  const nextOtp = otpSource(command, runOtp ?? (() => shell(/** @type {string} */ (command))), sleep);
   const password = env.GITEA_ADMIN_PASSWORD;
   const admin = env.GITEA_ADMIN_USER;
   if (password && !admin) {
@@ -108,9 +159,16 @@ export async function main({ env, origin = ORIGIN, stdout, stderr }) {
     let minted;
     if (password && admin) {
       const name = `registry-check-${randomUUID().slice(0, 8)}`;
-      const response = await api(origin, admin, password, user, 'POST', '', { name, scopes: [scope] }).catch(
-        () => undefined,
-      );
+      const mintOtp = await nextOtp();
+      if (mintOtp === null) {
+        stderr.write(`${label}: ${OTP_FAILED}: FAILED\n`);
+        failed = true;
+        continue;
+      }
+      const response = await api(origin, admin, password, user, 'POST', '', mintOtp, {
+        name,
+        scopes: [scope],
+      }).catch(() => undefined);
       if (!response) {
         stderr.write(`${label}: could not reach Gitea at ${origin}: FAILED\n`);
         failed = true;
@@ -145,9 +203,13 @@ export async function main({ env, origin = ORIGIN, stdout, stderr }) {
       failed = true;
     }
     if (minted && password && admin) {
-      const gone = await api(origin, admin, password, user, 'DELETE', `/${String(minted.id)}`).catch(
-        () => undefined,
-      );
+      const deleteOtp = await nextOtp();
+      const gone =
+        deleteOtp === null
+          ? undefined
+          : await api(origin, admin, password, user, 'DELETE', `/${String(minted.id)}`, deleteOtp).catch(
+              () => undefined,
+            );
       if (gone?.status !== 204) {
         stderr.write(
           `${label}: could not delete test token ${minted.name} of ${user}; delete it in Gitea under Settings > Applications: FAILED\n`,

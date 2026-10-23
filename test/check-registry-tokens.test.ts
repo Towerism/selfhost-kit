@@ -179,6 +179,7 @@ describe('check-registry-tokens minting its own tokens', () => {
     url: string;
     auth: string | undefined;
     sudo: string | undefined;
+    otp: string | undefined;
     body: string;
   };
 
@@ -192,7 +193,14 @@ describe('check-registry-tokens minting its own tokens', () => {
       req.on('end', () => {
         const { method = '', url = '' } = req;
         const sudo = req.headers.sudo as string | undefined;
-        calls.push({ method, url, auth: req.headers.authorization, sudo, body });
+        calls.push({
+          method,
+          url,
+          auth: req.headers.authorization,
+          sudo,
+          otp: req.headers['x-gitea-otp'] as string | undefined,
+          body,
+        });
         const mint = /^\/api\/v1\/users\/([^/]+)\/tokens$/.exec(url);
         const del = /^\/api\/v1\/users\/([^/]+)\/tokens\/(\d+)$/.exec(url);
         if (method === 'POST' && mint) {
@@ -226,7 +234,11 @@ describe('check-registry-tokens minting its own tokens', () => {
     return { origin, calls, live };
   }
 
-  async function run(env: Record<string, string>, opts: Parameters<typeof gitea>[0] = {}) {
+  async function run(
+    env: Record<string, string>,
+    opts: Parameters<typeof gitea>[0] = {},
+    io: { runOtp?: () => Promise<string>; sleep?: (ms: number) => Promise<void> } = {},
+  ) {
     const fake = await gitea(opts);
     const out: string[] = [];
     const err: string[] = [];
@@ -235,6 +247,7 @@ describe('check-registry-tokens minting its own tokens', () => {
       origin: fake.origin,
       stdout: { write: (s: string) => out.push(s) },
       stderr: { write: (s: string) => err.push(s) },
+      ...io,
     });
     return { ...fake, code, out: out.join(''), err: err.join('') };
   }
@@ -325,5 +338,84 @@ describe('check-registry-tokens minting its own tokens', () => {
     const all = r.out + r.err;
     expect(all).not.toContain('admin-password-value');
     expect(all).not.toMatch(/minted-/);
+  });
+
+  describe('with a two-factor account', () => {
+    const OTP = { ...ADMIN, GITEA_ADMIN_OTP_COMMAND: 'print-the-code' };
+    const feed = (codes: string[]) => {
+      const left = [...codes];
+      return { runOtp: () => Promise.resolve(left.shift() ?? ''), left };
+    };
+
+    it('sends no code header when no command is set', async () => {
+      const r = await run(ADMIN);
+      expect(r.calls.filter((c) => c.url.startsWith('/api/v1')).map((c) => c.otp)).toEqual([
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+      ]);
+    });
+
+    it('sends a new code with each of the four admin calls, waiting while the code has not changed', async () => {
+      const { runOtp } = feed(['111111', '111111', '222222', '333333', '333333', '444444']);
+      const waits: number[] = [];
+      const r = await run(OTP, {}, { runOtp, sleep: (ms) => Promise.resolve(void waits.push(ms)) });
+      expect(r.code).toBe(0);
+      expect(r.calls.filter((c) => c.url.startsWith('/api/v1')).map((c) => c.otp)).toEqual([
+        '111111',
+        '222222',
+        '333333',
+        '444444',
+      ]);
+      expect(waits).toHaveLength(2);
+    });
+
+    it('names the token left behind when the code never changes, and stops minting', async () => {
+      const r = await run(
+        OTP,
+        {},
+        { runOtp: () => Promise.resolve('111111'), sleep: () => Promise.resolve() },
+      );
+      expect(r.code).toBe(1);
+      expect(r.err).toMatch(/publish token: could not delete test token \S+ of ci-publisher/);
+      expect(r.err).toContain('read token: GITEA_ADMIN_OTP_COMMAND gave no new code: FAILED');
+      expect(r.calls.filter((c) => c.method === 'POST')).toHaveLength(1);
+    });
+
+    it('fails when the command prints nothing', async () => {
+      const r = await run(OTP, {}, { runOtp: () => Promise.resolve('  \n'), sleep: () => Promise.resolve() });
+      expect(r.code).toBe(1);
+      expect(r.err).toContain('GITEA_ADMIN_OTP_COMMAND gave no new code');
+    });
+
+    it('fails when the command itself fails', async () => {
+      const r = await run(OTP, {}, { runOtp: () => Promise.reject(new Error('boom')) });
+      expect(r.code).toBe(1);
+      expect(r.err).toContain('GITEA_ADMIN_OTP_COMMAND gave no new code');
+    });
+
+    it('names the token left behind when no code is available for the delete', async () => {
+      const { runOtp } = feed(['111111']);
+      const r = await run(
+        OTP,
+        {},
+        { runOtp: () => runOtp().then((c) => c || Promise.reject(new Error('x'))) },
+      );
+      expect(r.err).toMatch(/publish token: could not delete test token \S+ of ci-publisher/);
+    });
+
+    it('never prints a code', async () => {
+      const { runOtp } = feed(['123456', '234567', '345678', '456789']);
+      const r = await run({ ...OTP }, { publishStatus: 401 }, { runOtp });
+      expect(r.out + r.err).not.toMatch(/\d{6}/);
+    });
+
+    it('runs the command through the shell by default', async () => {
+      const r = await run({ ...ADMIN, GITEA_ADMIN_OTP_COMMAND: 'date +%s' });
+      expect(r.code).toBe(0);
+      const codes = r.calls.filter((c) => c.url.startsWith('/api/v1')).map((c) => c.otp);
+      expect(new Set(codes).size).toBe(4);
+    }, 15_000);
   });
 });
