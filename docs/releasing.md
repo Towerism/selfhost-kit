@@ -1,8 +1,8 @@
 # Releasing
 
 Releases are automatic. Every push to `main` whose CI passes may publish a new version of
-`@towerism/selfhost-kit` to npm, with provenance, and create the matching `vX.Y.Z` tag and GitHub
-Release. Nobody runs `npm publish` or pushes a `v*` tag by hand. The one exception was the bootstrap below.
+`@towerism/selfhost-kit` to the Gitea npm registry ([ADR-0009](architecture/adr/0009-gitea-npm-registry.md)),
+and create the matching `vX.Y.Z` tag and GitHub Release. Nobody runs `npm publish` or pushes a `v*` tag by hand.
 
 ## How a release happens
 
@@ -23,13 +23,14 @@ Release. Nobody runs `npm publish` or pushes a `v*` tag by hand. The one excepti
    | breaking (`!` or `BREAKING CHANGE:`)                               | major   |
    | `docs:`, `test:`, `chore:`, `ci:`, `refactor:`, `build:`, `style:` | none    |
 
-5. Before semantic-release runs, [`check-npm-trusted-publishing.mjs`](../scripts/check-npm-trusted-publishing.mjs)
-   checks that npm is at least 11.5.1, the first npm that does the trusted-publishing OIDC exchange itself.
-   An older npm fails the job there, before anything is tagged.
-6. semantic-release verifies the OIDC exchange, **pushes the `vX.Y.Z` tag**, publishes the downloaded
-   `dist/` to npm with npm trusted publishing, and then creates the GitHub Release. The tag goes out before
-   the publish, so a failed publish leaves a tag behind (see below). `fix(security): …` commits are listed
-   first, under **Security**, with their `Advisory: GHSA-…` linked.
+5. Before semantic-release runs, the job points npm at the Gitea registry with a userconfig outside the
+   repository. The token line names `${GITEA_PACKAGE_TOKEN}` and holds no secret. Then the job makes one
+   write request with the publish token and an empty body. The registry answers 400 for a write-scoped
+   token. Any other answer stops the job there, before anything is tagged.
+6. semantic-release **pushes the `vX.Y.Z` tag**, publishes the downloaded `dist/` to the Gitea registry,
+   and then creates the GitHub Release. The tag goes out before the publish, so a failed publish leaves a
+   tag behind (see the table below). `fix(security): …` commits are listed first, under **Security**, with
+   their `Advisory: GHSA-…` linked.
 
 ## The API report
 
@@ -44,98 +45,126 @@ that the diff is only cosmetic, and commit it to that PR.
 
 ## Credentials and permissions
 
-There is no npm token anywhere: not in repository, environment or organisation secrets, not in any
-workflow, and not on a maintainer's machine.
+| What           | Where it is set                                                                   | Used for                                                                                |
+| -------------- | --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| Publish token  | GitHub repository secret `GITEA_PACKAGE_TOKEN` (Settings → Secrets and variables) | the write probe and `npm publish`, in `release.yml` only                                |
+| Read token     | consumers' CI secret and Docker build secret `NPM_READ_TOKEN`                     | `pnpm install` of `@towerism/selfhost-kit` in each app                                  |
+| `GITHUB_TOKEN` | automatic, scoped by each job's `permissions`                                     | the tag and GitHub Release (`contents: write`), the artifact download (`actions: read`) |
 
-| What           | Where it comes from                           | Used for                                                                                |
-| -------------- | --------------------------------------------- | --------------------------------------------------------------------------------------- |
-| OIDC token     | `id-token: write` on the `release` job only   | npm trusted publishing and provenance                                                   |
-| `GITHUB_TOKEN` | automatic, scoped by each job's `permissions` | the tag and GitHub Release (`contents: write`), the artifact download (`actions: read`) |
+No npm token exists anywhere else: not in the repository, not in an organisation secret, not in a workflow
+file, and not on a maintainer's machine. The `release` job has no OIDC permission, and nothing in the
+repository holds a token value.
 
 The `release` job runs in the `npm` environment, which only `main` may deploy to. There are no required
 reviewers. That is deliberate ([ADR-0004](architecture/adr/0004-sharing-docker-and-ci.md)): a published
 version reaches no user by itself, and the manual gates are each app's Renovate merge and the Unraid
 _Update_ click.
 
-npm side, for package `@towerism/selfhost-kit`:
+### Publish token: setup and checks
 
-- trusted publisher: GitHub Actions, repository `Towerism/selfhost-kit`, workflow `release.yml`,
-  environment `npm` (check with `npm trust list @towerism/selfhost-kit`);
-- publishing access: _Require two-factor authentication and disallow tokens_;
-- the owner's npm account has 2FA for authorization and writes.
+Verified over SSH on 2026-10-22 with a read-only query of the Gitea database (no token values read):
 
-Renaming `release.yml`, the `npm` environment or the repository breaks publishing until the trusted
-publisher is recreated.
+- The dedicated user is `ci-publisher`. It has one token, named `registry`, with scope `write:package`
+  only. Its only team is `publishers` in `towerism`, which has package write. It owns no packages and
+  has no collaborator rows, so the token can write packages only through `towerism`.
+- The token was created on 2026-10-22. Its name suggests it may also serve container pushes. Confirm
+  that before you reuse it; a new token for npm only is the cleaner choice.
+
+Set it up:
+
+1. In Gitea, sign in as `ci-publisher`, open **Settings → Applications**, and create a token with only the
+   `write:package` scope. Copy it once.
+2. In GitHub, open `Towerism/selfhost-kit` **Settings → Secrets and variables → Actions**, and set the
+   repository secret `GITEA_PACKAGE_TOKEN` to that value.
+3. Record the creation date in the table under [Rotation](#rotation).
+
+### Read token: consumers
+
+Each app that installs `@towerism/selfhost-kit` needs a read token. The `pull` user's token named `read`
+(scope `read:package`) is the one already in use for Unraid's registry login. Using it for npm means a
+rotation of that token also affects Unraid. A separate npm read token avoids that coupling; the owner decides.
+
+Consumer `.npmrc` (commit this; it holds no token):
+
+```ini
+@towerism:registry=https://vcs.martinfrackerjr.com/api/packages/towerism/npm/
+//vcs.martinfrackerjr.com/api/packages/towerism/npm/:_authToken=${NPM_READ_TOKEN}
+```
+
+- CI: set `NPM_READ_TOKEN` as a repository secret of the app, and pass it to the install step as an
+  environment variable.
+- Docker build: pass it as a BuildKit secret, never as a build argument:
+
+  ```dockerfile
+  RUN --mount=type=secret,id=npm_read_token \
+      NPM_READ_TOKEN="$(cat /run/secrets/npm_read_token)" pnpm install --frozen-lockfile
+  ```
+
+  and build with `docker build --secret id=npm_read_token,env=NPM_READ_TOKEN .`.
+
+- Local: put `NPM_READ_TOKEN` in your shell environment. Never write it into `.npmrc`.
+
+Without the token, `pnpm install` fails with a 401 for the `@towerism` scope. It does not fall back to
+public npm.
+
+### Rotation
+
+Gitea access tokens do not expire on their own. The owner rotates both tokens within 365 days of creation.
+Put the due date in the calendar when you create a token.
+
+| Token                | Owner          | Scope           | Created    | Rotate by  |
+| -------------------- | -------------- | --------------- | ---------- | ---------- |
+| Publish (`registry`) | `ci-publisher` | `write:package` | 2026-10-22 | 2027-10-22 |
+| Read (`read`)        | `pull`         | `read:package`  | 2026-10-22 | 2027-10-22 |
+
+To rotate a token:
+
+1. Create the new token as above, with the same owner and scope.
+2. Update the GitHub secret (publish) or the consumers' secrets (read).
+3. Run the release job or an install, and check it works.
+4. Revoke the old token in Gitea, and update the table.
+
+## Package name on public npm
+
+`@towerism/selfhost-kit` is already published on public npm, with versions `0.0.0` through `1.0.0`. The
+last one, `1.0.0`, was published by the release job before this change. The Gitea registry starts empty,
+and consumers that still install from public npm stay on `1.0.0`. The owner decides what happens to the
+public package; this change does not touch it.
+
+The first Gitea release continues the git tag history. The next version after the `v1.0.0` tag is published
+to the Gitea registry, not to public npm.
 
 ## Rollback
 
 npm never lets a version be published twice, and unpublishing is limited, so a bad release is rolled
 forward:
 
-1. Deprecate it: `npm deprecate @towerism/selfhost-kit@X.Y.Z "<what is wrong; use X.Y.Z+1>"`.
+1. Deprecate it: `npm deprecate @towerism/selfhost-kit@X.Y.Z "<what is wrong; use X.Y.Z+1>"`, with the
+   Gitea registry configured in `.npmrc`.
 2. Merge the fix as a `fix:` commit. The pipeline publishes the next patch.
 3. In each app, revert the Renovate PR that took the bad version if the fix isn't out yet.
 
 ## When a release fails
 
-| Symptom                                                           | Cause                                                                                                                          | Recovery                                                                                                                                                                                                                                           |
-| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| The `release` job was skipped                                     | CI didn't succeed, the run wasn't a push, or it came from a fork                                                               | Nothing to do; fix CI and push again                                                                                                                                                                                                               |
-| "main is at …, not …: the newer commit's run will release"        | A newer commit landed                                                                                                          | Nothing to do; that commit's run releases                                                                                                                                                                                                          |
-| npm auth error (E401/E403/E404, "OIDC") before any tag is pushed  | Trusted publisher missing, expired (npm voids an unused new configuration after 2 days) or misnamed                            | `npm trust list @towerism/selfhost-kit`; if wrong, `npm trust revoke` it and recreate it as below, then re-run the job                                                                                                                             |
-| npm E422 about provenance                                         | `repository.url` in `package.json` doesn't match this repository                                                               | Fix it in a `fix:` commit                                                                                                                                                                                                                          |
-| "can't publish with OIDC: trusted publishing needs npm >= 11.5.1" | The runner's Node bundles an npm older than 11.5.1                                                                             | Nothing was tagged or published. Make `.node-version` resolve to a Node 24 that bundles npm 11.5.1 or later, then re-run the job                                                                                                                   |
-| OIDC verified, then `npm publish` fails with `ENEEDAUTH`          | An npm older than 11.5.1 ran the publish (the check above was skipped or removed). This is how `0.1.0` first failed (issue #9) | The tag was pushed. If `npm view @towerism/selfhost-kit@X.Y.Z version` returns 404, delete the `vX.Y.Z` tag, restore the check or fix npm, then re-run the job                                                                                     |
-| `pnpm install` failed                                             | Registry or network outage                                                                                                     | Re-run the job. Nothing was published                                                                                                                                                                                                              |
-| npm publish failed after the tag was pushed                       | Registry outage mid-release                                                                                                    | If `npm view @towerism/selfhost-kit@X.Y.Z version` returns 404, delete the `vX.Y.Z` tag (and its GitHub Release if one exists) and re-run the job. If the version is on npm, only the GitHub Release is missing: re-run, or create it from the tag |
-| Nothing was released and the job succeeded                        | No releasable commit since the last tag                                                                                        | Expected                                                                                                                                                                                                                                           |
+| Symptom                                                            | Cause                                                                       | Recovery                                                                                                                                                                                                                                                    |
+| ------------------------------------------------------------------ | --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The `release` job was skipped                                      | CI didn't succeed, the run wasn't a push, or it came from a fork            | Nothing to do; fix CI and push again                                                                                                                                                                                                                        |
+| "main is at …, not …: the newer commit's run will release"         | A newer commit landed                                                       | Nothing to do; that commit's run releases                                                                                                                                                                                                                   |
+| "Publish token refused" from the write probe, before any tag       | `GITEA_PACKAGE_TOKEN` missing, revoked, expired or without `write:package`  | Check the secret, then the token in Gitea. Create a new one as in [Publish token](#publish-token-setup-and-checks) if needed, and re-run the job. Nothing was tagged or published                                                                           |
+| npm refuses the publish after the tag was pushed (401, 403 or 404) | Registry outage, or the token was revoked between the probe and the publish | If `npm view @towerism/selfhost-kit@X.Y.Z version` (with the Gitea registry configured) returns 404, delete the `vX.Y.Z` tag and its GitHub Release, then re-run the job. Or publish the tagged commit by hand with the publish token                       |
+| `pnpm install` failed                                              | Registry or network outage                                                  | Re-run the job. Nothing was published                                                                                                                                                                                                                       |
+| npm publish failed after the tag was pushed                        | Registry outage mid-release                                                 | If `npm view @towerism/selfhost-kit@X.Y.Z version` returns 404, delete the `vX.Y.Z` tag (and its GitHub Release if one exists) and re-run the job. If the version is on the registry, only the GitHub Release is missing: re-run, or create it from the tag |
+| Nothing was released and the job succeeded                         | No releasable commit since the last tag                                     | Expected                                                                                                                                                                                                                                                    |
 
-## Bootstrap (done once, in K0)
+The recovery steps need the publish token on the machine that does them, so keep the token in the password
+manager and not only in the GitHub secret.
 
-npm can only attach a trusted publisher to a package that already exists, so the first version was
-published by hand as an empty placeholder, and CI published the first real version.
+## Retiring the GitHub copy (at the CI move)
 
-1. Confirm the `towerism` npm account or organisation exists and has 2FA for authorization and writes:
-   `npm profile get` shows `two-factor auth: auth-and-writes`.
-2. In an empty folder outside this repository, create the placeholder and publish it with an interactive
-   login, then log out, which revokes the session token:
+This section applies when the CI moves to Gitea ([#41](https://github.com/Towerism/selfhost-kit/issues/41), step 4).
+Until then, the GitHub copy's `release.yml` is the release job, and it is the only one that releases.
 
-   ```sh
-   cat > package.json <<'EOF'
-   {
-     "name": "@towerism/selfhost-kit",
-     "version": "0.0.0",
-     "description": "Placeholder that bootstraps npm trusted publishing. Use >=0.1.0.",
-     "license": "MIT",
-     "repository": { "type": "git", "url": "git+https://github.com/Towerism/selfhost-kit.git" }
-   }
-   EOF
-   echo "Placeholder that bootstraps npm trusted publishing. Use @towerism/selfhost-kit >=0.1.0." > README.md
-   npm login
-   npm publish --access public
-   npm logout
-   npm token list   # expect no token left from this
-   ```
-
-3. No more than 2 days before step 5, attach the trusted publisher (npm 11.15 or later):
-
-   ```sh
-   npm trust github @towerism/selfhost-kit --repo Towerism/selfhost-kit --file release.yml --env npm --allow-publish
-   npm trust list @towerism/selfhost-kit
-   ```
-
-4. Tag the last commit on `main` before the K0 merge as `v0.0.0`, so semantic-release's first release is
-   `0.1.0` and not `1.0.0`. This is the single hand-pushed `v*` tag the project allows
-   ([ADR-0005 amendment](architecture/adr/0005-versioning-and-security-fixes.md#amendment-2026-10-13-the-v000-bootstrap-tag)).
-
-   ```sh
-   git tag v0.0.0 <last main commit before K0> && git push origin v0.0.0
-   ```
-
-5. Merge the K0 pull request. `release.yml` publishes `0.1.0` with provenance.
-6. Lock it down: set the package's publishing access to _Require two-factor authentication and disallow
-   tokens_, and deprecate the placeholder:
-
-   ```sh
-   npm deprecate @towerism/selfhost-kit@0.0.0 "Bootstrap placeholder for trusted publishing; use >=0.1.0"
-   ```
+1. Move the release job to Gitea Actions with the rest of CI. Its release plugin then reads `GITEA_TOKEN`,
+   which it gets from the job's built-in Gitea Actions token.
+2. Disable the GitHub copy's `release.yml` in the same change set. Two copies must not release.
+3. Remove the npm trusted-publisher entry for `@towerism/selfhost-kit` on npmjs.com (`npm trust revoke`).

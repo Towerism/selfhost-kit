@@ -31,6 +31,21 @@ It ships as one npm package, `@towerism/selfhost-kit`, with a framework-free cor
 pnpm add --save-exact @towerism/selfhost-kit
 ```
 
+The package is published to the Gitea npm registry, not to public npm ([ADR-0009](docs/architecture/adr/0009-gitea-npm-registry.md)).
+Each app needs two things before that command works:
+
+1. An `.npmrc` that maps the scope to the registry. It holds the variable, never a token:
+
+   ```ini
+   @towerism:registry=https://vcs.martinfrackerjr.com/api/packages/towerism/npm/
+   //vcs.martinfrackerjr.com/api/packages/towerism/npm/:_authToken=${NPM_READ_TOKEN}
+   ```
+
+2. `NPM_READ_TOKEN` set in the environment: a repository secret in CI, a BuildKit secret in the Docker build,
+   and a shell variable locally. [docs/releasing.md](docs/releasing.md#read-token-consumers) has the details.
+
+Without the token, the install fails with a 401 for `@towerism`. It does not fall back to public npm.
+
 Requires Node 24.11 or later. The package is ESM only. What each entry point needs in the app:
 
 - `@towerism/selfhost-kit`: nothing more.

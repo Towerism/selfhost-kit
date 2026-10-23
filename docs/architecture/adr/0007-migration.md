@@ -100,6 +100,12 @@ After A1–A7, an existing install updates with **no action**:
 The deploy guide doesn't change, except for one sentence noting that the infrastructure comes from the
 kit.
 
+**Amended 2026-10-22 by [ADR-0009](0009-gitea-npm-registry.md).** The kit is now installed from the Gitea
+npm registry, which needs a read token. An existing app's CI and Docker build therefore need the
+`NPM_READ_TOKEN` secret and an `.npmrc` that maps `@towerism` to that registry. The rest of this section
+still holds: the env names, the secret files, the blob format and the entrypoint are unchanged. The
+install step is the one place the "no action" promise no longer holds.
+
 ### Genie
 
 - Genie's M1 imports the kit from the first commit:

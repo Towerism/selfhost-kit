@@ -40,7 +40,7 @@ never do.
 
 1. The fix is prepared in a private fork of the advisory, so it isn't public before it ships.
 2. It's committed as `fix(security): …` with an `Advisory: GHSA-…` footer.
-3. Merging it publishes a patch release to npm from CI, with provenance. Its release notes list it first,
+3. Merging it publishes a patch release to the Gitea npm registry from CI. Its release notes list it first,
    under **Security**.
 4. The advisory is then published with the patched version range, so GitHub and Renovate flag vulnerable
    lockfiles in the apps.

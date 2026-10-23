@@ -1,6 +1,8 @@
 # ADR-0003: One package with subpath exports, published to public npm with provenance
 
-- Status: Accepted (2026-10-13); amended 2026-10-13 (Node 24, below) and 2026-10-14 (dev-tool peers, below)
+- Status: Accepted (2026-10-13); amended 2026-10-13 (Node 24, below) and 2026-10-14 (dev-tool peers, below).
+  The registry decision (public npm, trusted publishing, provenance) is superseded by
+  [ADR-0009](0009-gitea-npm-registry.md) (2026-10-22). The single-package shape and the subpath exports stand.
 - Date: 2026-10-13
 
 ## Context

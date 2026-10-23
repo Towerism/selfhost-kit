@@ -137,8 +137,8 @@ flowchart TB
     TESTING --> NITRO
   end
 
-  NPM[("npm registry<br/>public, with provenance")]
-  Kit -- "semantic-release, OIDC trusted publishing" --> NPM
+  NPM[("Gitea npm registry<br/>token-based, ADR-0009")]
+  Kit -- "semantic-release, publish token" --> NPM
 
   subgraph ATT["attendance (Nuxt 4)"]
     AMOD["server/modules/* (domain)"]
@@ -221,7 +221,7 @@ release-config/
                             own release.config.mjs
 .github/workflows/
   ci.yml                    the kit's own CI: lint, typecheck, test + coverage, shellcheck, entrypoint image test
-  release.yml               semantic-release → npm (provenance) + GitHub Release
+  release.yml               semantic-release → Gitea npm registry (publish token) + GitHub Release
   app-image.yml             reusable: build, smoke-test and publish an app image; outputs the digest
   app-release.yml           reusable: semantic-release dry run, tag the tested digest, git tag + Release
 test/
@@ -426,7 +426,7 @@ sequenceDiagram
   participant Unraid
   Dev->>Kit: fix(security): … (private advisory drafted first)
   Kit->>Kit: CI green → semantic-release → patch
-  Kit->>NPM: publish with provenance
+  Kit->>NPM: publish with the publish token
   Kit->>Kit: GitHub Release with "Security" notes, advisory published
   Ren->>NPM: sees the new version (no minimum release age for this package)
   Ren->>App: PR "fix(deps): update @towerism/selfhost-kit" labelled security
@@ -480,7 +480,7 @@ reaches 1.0. Genie's ADR-0001 and ADR-0009 are amended so they say "shared throu
 | A kit bug ships to both apps at once (shared blast radius) | Med | High | Known-answer and contract tests; both apps' full CI runs on every kit bump before merge; the Unraid *Update* click is a manual gate; rollback is reverting the Renovate PR, which is safe because of rule 2 in §2 |
 | A refactor changes the vault format or a secret file name and breaks existing installs | Low | High | Format v1 frozen and pinned by KATs; file names are app-declared, never kit defaults that could change; migration gates A3/A4 use fixtures of a real (synthetic) install |
 | Renovate PRs pile up or wait, so fixes don't propagate | Med | Med | Automerge for kit patch and minor releases when CI is green; Renovate's `vulnerabilityAlerts` on; a security release also opens a tracking issue in each app |
-| The npm scope, or a token, is compromised and publishes a malicious version | Low | High | Trusted publishing (OIDC) with provenance, no long-lived npm token; 2FA on the npm account; apps install with `--frozen-lockfile`; Renovate shows provenance |
+| The publish token is compromised and publishes a malicious version | Low | High | Package-write-only token owned by a dedicated user, read only in the `npm` environment's publish step; rotation within 365 days; apps install with `--frozen-lockfile`; no provenance (ADR-0009) |
 | The public repo leaks something private | Low | Med | No store, LAN or person-specific values anywhere, examples use `example.com`, `secret-scan` (gitleaks) in CI; fixtures are generated synthetic values |
 | The API grows to fit both apps' corner cases (a framework by accident) | Med | Med | Quality attribute 5; anything only one app needs stays in that app; additions need a consumer in the same PR series |
 | A Nitro 3 / h3 v2 upgrade breaks the adapters | Med | Low | Adapters are thin (≈150 lines) and isolated in `/nitro`; the core is unaffected; h3 is a peer dependency with an explicit range |
@@ -511,7 +511,8 @@ filed yet.
 | --- | ----- | ------ |
 | [0001](adr/0001-share-as-a-package.md) | Share the infrastructure as a package, not a layer, template or copy | Accepted |
 | [0002](adr/0002-scope.md) | Scope: what the kit holds, and why the job runner stays out | Accepted |
-| [0003](adr/0003-single-package-on-npm.md) | One package with subpath exports, published to public npm with provenance | Accepted (amended 2026-10-13, 2026-10-14) |
+| [0003](adr/0003-single-package-on-npm.md) | One package with subpath exports, published to public npm with provenance | Accepted (amended 2026-10-13, 2026-10-14); registry decision superseded by 0009 |
+| [0009](adr/0009-gitea-npm-registry.md) | Publish to the Gitea npm registry, with a token, not trusted publishing | Accepted (2026-10-22) |
 | [0004](adr/0004-sharing-docker-and-ci.md) | Share Docker pieces as package assets and CI as reusable workflows | Accepted (amended 2026-10-13) |
 | [0005](adr/0005-versioning-and-security-fixes.md) | Semver, compatibility rules and the security-fix path | Accepted (amended 2026-10-13, 2026-10-14) |
 | [0006](adr/0006-api-boundaries.md) | Framework-free core, thin Nitro adapters, and the `/data` contract | Accepted |
