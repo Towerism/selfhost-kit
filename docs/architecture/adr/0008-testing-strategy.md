@@ -193,7 +193,7 @@ anywhere in this public repo. A gitleaks check runs in CI.
 - Whether a PR is breaking ([ADR-0005](0005-versioning-and-security-fixes.md)); the API-surface report
   helps, but a human decides.
 - The AAD and key-per-recovery-domain guidance in the docs.
-- The npm account's 2FA and trusted-publisher settings, and branch protection on `main`.
+- The npm account's 2FA, the Gitea publish-token scope and rotation (ADR-0009), and branch protection on `main`.
 - The README states the kit's scope.
 - The workflows' permissions (least privilege per job).
 

@@ -55,7 +55,8 @@ No npm token exists anywhere else: not in the repository, not in an organisation
 file, and not on a maintainer's machine. The `release` job has no OIDC permission, and nothing in the
 repository holds a token value.
 
-The `release` job runs in the `npm` environment, which only `main` may deploy to. There are no required
+The `release` job runs in the `npm` environment, which only `main` may deploy to. The publish token is a
+repository secret, so the environment doesn't gate it; the job's branch rule and `if` condition do. There are no required
 reviewers. That is deliberate ([ADR-0004](architecture/adr/0004-sharing-docker-and-ci.md)): a published
 version reaches no user by itself, and the manual gates are each app's Renovate merge and the Unraid
 _Update_ click.
@@ -81,7 +82,8 @@ Set it up:
 ### Read token: consumers
 
 Each app that installs `@towerism/selfhost-kit` needs a read token. The `pull` user's token named `read`
-(scope `read:package`) is the one already in use for Unraid's registry login. Using it for npm means a
+(scope `read:package`) is the one already in use for Unraid's registry login. Its owner and scope were checked
+over SSH on 2026-10-22, and the Unraid use comes from [#41](https://github.com/Towerism/selfhost-kit/issues/41). Using it for npm means a
 rotation of that token also affects Unraid. A separate npm read token avoids that coupling; the owner decides.
 
 Consumer `.npmrc` (commit this; it holds no token):

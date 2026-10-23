@@ -512,9 +512,9 @@ filed yet.
 | [0001](adr/0001-share-as-a-package.md) | Share the infrastructure as a package, not a layer, template or copy | Accepted |
 | [0002](adr/0002-scope.md) | Scope: what the kit holds, and why the job runner stays out | Accepted |
 | [0003](adr/0003-single-package-on-npm.md) | One package with subpath exports, published to public npm with provenance | Accepted (amended 2026-10-13, 2026-10-14); registry decision superseded by 0009 |
-| [0009](adr/0009-gitea-npm-registry.md) | Publish to the Gitea npm registry, with a token, not trusted publishing | Accepted (2026-10-22) |
 | [0004](adr/0004-sharing-docker-and-ci.md) | Share Docker pieces as package assets and CI as reusable workflows | Accepted (amended 2026-10-13) |
 | [0005](adr/0005-versioning-and-security-fixes.md) | Semver, compatibility rules and the security-fix path | Accepted (amended 2026-10-13, 2026-10-14) |
 | [0006](adr/0006-api-boundaries.md) | Framework-free core, thin Nitro adapters, and the `/data` contract | Accepted |
 | [0007](adr/0007-migration.md) | Migrate attendance piece by piece behind its existing tests; Genie starts on the kit | Accepted |
 | [0008](adr/0008-testing-strategy.md) | Testing strategy: KATs, contract suites the apps run, fake clock | Accepted (sketches corrected 2026-10-14) |
+| [0009](adr/0009-gitea-npm-registry.md) | Publish to the Gitea npm registry, with a token, not trusted publishing | Accepted (2026-10-22) |

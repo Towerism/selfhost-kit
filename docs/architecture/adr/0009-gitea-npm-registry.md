@@ -34,8 +34,8 @@ still holds: installs in CI, in Docker builds and on developers' machines all ne
   consumers map the `@towerism` scope to it in `.npmrc`.
 - **Publish credential.** A Gitea access token with scope `write:package`, owned by a dedicated user
   (`ci-publisher`) whose only team grants package write for `towerism`. It is the repository secret
-  `GITEA_PACKAGE_TOKEN`, read by the release job's publish step only. The release job also probes the
-  token with a write request before semantic-release tags, so a refused token stops the job first.
+  `GITEA_PACKAGE_TOKEN`. It is set only on the write probe and on the `semantic-release` step. The probe
+  sends it with a write request before semantic-release tags, so a refused token stops the job first.
 - **Install credential.** A read-only token, in `NPM_READ_TOKEN`, held by each consuming app's CI and
   its Docker build as a BuildKit secret. It is never written into a committed file or an image layer.
 - **Provenance.** Dropped. npm's provenance needs the OIDC token from GitHub Actions or GitLab CI, so it
@@ -55,8 +55,9 @@ What limits the damage:
 
 - the publish token has `write:package` only, and its owner's only team grants package write, so it can't
   write repositories, issues or other owners' packages;
-- it is read only in the release job's publish step and the write probe, in the `npm` environment, which
-  only `main` may deploy to;
+- the token is in the environment of the whole `semantic-release` process, so every plugin it loads can
+  read it, not only npm's publish. The owner accepts that. The secret is a repository secret, so the
+  `npm` environment doesn't gate it; the job's branch rule and `if` condition do;
 - the release job never prints it, and the job log is checked for the token value during review;
 - rotation within 365 days is recorded in [docs/releasing.md](../../releasing.md#rotation). Gitea tokens
   don't expire on their own, so the reminder is manual.

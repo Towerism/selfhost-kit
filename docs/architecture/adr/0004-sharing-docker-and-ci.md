@@ -1,6 +1,8 @@
 # ADR-0004: Share Docker pieces as package assets and CI as reusable workflows
 
-- Status: Accepted (2026-10-13); amended 2026-10-13 (Node 24, below); amended 2026-10-13 (what K3 shipped, below)
+- Status: Accepted (2026-10-13); amended 2026-10-13 (Node 24, below); amended 2026-10-13 (what K3 shipped, below).
+  The release credential (OIDC trusted publishing, `id-token: write`) is superseded by
+  [ADR-0009](0009-gitea-npm-registry.md) (2026-10-22). The rest of this ADR stands.
 - Date: 2026-10-13
 
 ## Context
@@ -89,12 +91,12 @@ own issue spec, with the skill applied again there.
 - **The kit's own pipeline** (planned in detail in the K0/K3 specs):
   - **Gates:** `lint → typecheck → test (+coverage gate) → shellcheck/hadolint → entrypoint image test`,
     and only then `release`.
-  - **Release:** runs only on `main`, only after every gate is green, with `id-token: write` for npm
-    trusted publishing.
+  - **Release:** runs only on `main`, only after every gate is green. It publishes to the Gitea npm
+    registry with a token, not OIDC (ADR-0009).
   - **Cache:** pnpm store, keyed on `pnpm-lock.yaml`.
   - **Matrix:** none. Both consumers are on Node 24 (they were on Node 22; see the
     [Node 24 amendment](#amendment-2026-10-13-node-24)). Add another Node major only when an app moves to it.
-  - **Secrets:** none stored (OIDC for npm, `GITHUB_TOKEN` for the GitHub Release).
+  - **Secrets:** the npm publish token and the read token (ADR-0009), and `GITHUB_TOKEN` for the GitHub Release.
   - **Environments:** the `release` job runs in a protected `npm` environment limited to `main`. There is
     **no manual approval** in the kit's own pipeline. This is a deliberate departure from a "manual gate
     for production" policy:
